@@ -1,0 +1,9 @@
+{
+    "name": "AI人设生成器",
+    "version": "1.0.0",
+    "description": "AI人设生成器插件",
+    "author": "YourName",
+    "type": "extension",
+    "js": "index.js",
+    "auto_load": true
+}
