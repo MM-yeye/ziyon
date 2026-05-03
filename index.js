@@ -1,0 +1,3454 @@
+// AI Character Generator - 日夜间模式 + 智能世界书扩展版
+// 包含：角色卡、用户人设、批量生成、世界书、世界扩展、关系网、魔法衣橱(含QQ服装)、故事生成器、玩法生成器、小说生成器、小剧场、心理学分析(含MBTI)、文风生成、预设生成、自定义页面管理器
+
+(function() {
+setTimeout(() => {
+try {
+initPlugin();
+} catch (e) {
+console.warn("AI人设生成器启动失败:", e);
+}
+}, 1000);
+
+// ============================================================================
+// API配置存储
+// ============================================================================
+
+const EXTENSION_NAME = 'ai_char_gen';
+const STORAGE_KEYS = {
+    API_CONFIG: 'api_config',
+    CUSTOM_TEMPLATES: 'custom_templates',
+    CUSTOM_PAGES: 'custom_pages',
+    ACTIVE_TABS: 'active_tabs'
+};
+
+const DEFAULT_API_CONFIG = {
+    apiUrl: '',
+    apiKey: '',
+    apiModel: '',
+    availableModels: []
+};
+
+let apiConfig = { ...DEFAULT_API_CONFIG };
+let customTemplates = {
+    character: '',
+    user: '',
+    worldbook: '',
+    relationship: '',
+    wardrobe: '',
+    worldExtend: {}
+};
+
+let customPages = [];
+
+function saveApiConfig() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_${STORAGE_KEYS.API_CONFIG}`, JSON.stringify(apiConfig));
+    } catch (e) {
+        console.error('保存API配置失败:', e);
+    }
+}
+
+function loadApiConfig() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_${STORAGE_KEYS.API_CONFIG}`);
+        if (saved) {
+            apiConfig = { ...DEFAULT_API_CONFIG, ...JSON.parse(saved) };
+        }
+    } catch (e) {
+        console.error('加载API配置失败:', e);
+    }
+}
+
+function loadCustomTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_${STORAGE_KEYS.CUSTOM_TEMPLATES}`);
+        if (saved) {
+            customTemplates = { ...customTemplates, ...JSON.parse(saved) };
+        }
+    } catch (e) {
+        console.error('加载自定义模板失败:', e);
+    }
+}
+
+function saveCustomTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_${STORAGE_KEYS.CUSTOM_TEMPLATES}`, JSON.stringify(customTemplates));
+    } catch (e) {
+        console.error('保存自定义模板失败:', e);
+    }
+}
+
+function loadCustomPages() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_${STORAGE_KEYS.CUSTOM_PAGES}`);
+        if (saved) {
+            customPages = JSON.parse(saved);
+        }
+    } catch (e) {
+        console.error('加载自定义页面失败:', e);
+    }
+}
+
+function saveCustomPages() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_${STORAGE_KEYS.CUSTOM_PAGES}`, JSON.stringify(customPages));
+    } catch (e) {
+        console.error('保存自定义页面失败:', e);
+    }
+}
+
+// ============================================================================
+// 选项卡管理器
+// ============================================================================
+
+const builtInTabs = {
+    api: 'API',
+    char: '角色卡',
+    batch: '批量生成',
+    user: '用户人设',
+    world: '世界书',
+    'world-extend': '世界扩展',
+    relation: '关系网',
+    wardrobe: '魔法衣橱',
+    story: '故事生成器',
+    playmix: '玩法生成器',
+    novel: '小说生成器',
+    theater: '小剧场',
+    psychology: '心理学分析',
+    stylegen: '文风生成',
+    presetgen: '预设生成',
+    'custom-mgr': '自定义页面',
+    history: '历史',
+    templates: '模板库',
+    'template-edit': '模板编辑',
+    size: '大小'
+};
+
+const DEFAULT_ACTIVE_TABS = ['api', 'char', 'batch', 'user', 'world', 'wardrobe', 'story', 'novel', 'custom-mgr'];
+
+function getActiveTabs() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_${STORAGE_KEYS.ACTIVE_TABS}`);
+        if (saved && JSON.parse(saved).length > 0) {
+            return JSON.parse(saved);
+        }
+    } catch(e) {}
+    return [...DEFAULT_ACTIVE_TABS];
+}
+
+function saveActiveTabs(tabs) {
+    localStorage.setItem(`${EXTENSION_NAME}_${STORAGE_KEYS.ACTIVE_TABS}`, JSON.stringify(tabs));
+}
+
+function hideTab(tabId) {
+    const active = getActiveTabs();
+    if (active.includes(tabId)) {
+        const newActive = active.filter(id => id !== tabId);
+        saveActiveTabs(newActive);
+        rebuildTabsAndContents();
+    }
+}
+
+function restoreAllTabs() {
+    saveActiveTabs([...DEFAULT_ACTIVE_TABS]);
+    rebuildTabsAndContents();
+    if (typeof toastr !== 'undefined') toastr.success('选项卡已恢复默认');
+}
+
+// 真正删除自定义页面
+function deleteCustomPage(pageId) {
+    const idx = customPages.findIndex(p => p.id === pageId);
+    if (idx !== -1) {
+        customPages.splice(idx, 1);
+        saveCustomPages();
+        // 从激活选项卡中移除
+        const active = getActiveTabs();
+        const tabId = `custom_${pageId}`;
+        if (active.includes(tabId)) {
+            const newActive = active.filter(id => id !== tabId);
+            saveActiveTabs(newActive);
+        }
+        refreshCustomPagesUI();
+        rebuildTabsAndContents();
+        refreshTemplateEditor();
+        if (typeof toastr !== 'undefined') toastr.success('页面已删除');
+        return true;
+    }
+    return false;
+}
+
+// ============================================================================
+// 默认模板
+// ============================================================================
+
+const DEFAULT_CHAR_TEMPLATE = `char_name:
+  Chinese name: 
+  Nickname: 
+  age: 
+  gender: 
+  height: 
+  identity:
+    - 
+  background_story:
+    童年(0-12岁):
+    少年(13-18岁):
+    青年(19-35岁):
+    中年(35-至今):
+    现状:
+  
+  social_status: 
+    - 
+
+  appearance:
+    hair: 
+    eyes: 
+    skin:
+    face_style: 
+    build: 
+      - 
+  attire:
+    business_formal:
+    business_casual:
+    casual_wear:
+    home_wear:
+
+  archetype: 
+
+  personality:
+    core_traits: 
+      - : ""
+    romantic_traits: 
+      - : ""
+       
+  lifestyle_behaviors:
+    - 
+    - 
+  
+  work_behaviors:
+    - 
+  
+  emotional_behaviors:
+    angry:
+    happy: 
+
+  goals:
+    - 
+  
+  weakness:
+    - 
+
+  likes:
+    - 
+
+  dislikes:
+    - 
+  
+  skills:
+    - 工作: ["",""]
+    - 生活: ["",""]
+    - 爱好: ["",""]
+
+  NSFW_information:
+    Sex_related traits:
+      experiences: 
+      sexual_orientation: 
+      sexual_role: 
+      sexual_habits: 
+        - 
+    Kinks: 
+    Limits:
+
+  住所与生活环境:
+    居住地类型: 
+    具体位置: 
+    家里布设风格: 
+    卧室风格: 
+    最常待的角落: 
+
+  动物塑:
+    最像的动物: 
+    理由: 
+
+  已掌握技能:
+    战斗类: 
+    生活类: 
+    专业类: 
+    隐藏技能: 
+
+  关系距离矩阵:
+    对方名称:
+      信任值: [0-10]
+      依赖值: [0-10]
+      防备值: [0-10]
+      愧疚值: [0-10]
+      控制值: [0-10]
+      服从值: [0-10]
+      吸引力: [0-10]
+
+  矛盾清单:
+    - 
+    - `;
+
+const DEFAULT_RELATIONSHIP_TEMPLATE = `角色A:
+  姓名:
+  身份:
+  性格简述:
+
+角色B:
+  姓名:
+  身份:
+  性格简述:
+
+彼此身份:
+  A对B的称呼:
+  B对A的称呼:
+  社会关系:
+
+对对方的看法:
+  A眼中的B:
+  B眼中的A:
+
+关系性质:
+  表面关系:
+  实际关系:
+  关系亲密度: [1-10]
+
+隐秘心理:
+  A的隐秘想法:
+  B的隐秘想法:
+
+对对方的期望:
+  A期望B:
+  B期望A:
+
+互动模式:
+  日常相处:
+  冲突时的表现:
+  特殊情境:
+
+信任程度: [1-10]
+
+冲突点:
+  潜在矛盾:
+  已有争执:
+
+关系发展:
+  过去:
+  现在:
+  未来可能:`;
+
+const DEFAULT_WARDROBE_TEMPLATE = `外貌特征:
+  发型:
+    样式:
+    颜色:
+    长度:
+  眼睛:
+    颜色:
+    形状:
+    特征:
+  肤色:
+    色调:
+    质感:
+  脸型:
+    轮廓:
+    特点:
+  五官:
+    鼻子:
+    嘴唇:
+    眉毛:
+  特殊印记:
+    胎记:
+    疤痕:
+    纹身:
+
+体型特征:
+  身高:
+  体重:
+  身材类型:
+  胸部:
+    尺寸:
+    形状:
+  腰部:
+    粗细:
+    线条:
+  臀部:
+    大小:
+    形状:
+  腿部:
+    长度:
+    线条:
+
+服饰打扮:
+  上装:
+    款式:
+    颜色:
+    材质:
+    细节:
+  下装:
+    款式:
+    颜色:
+    材质:
+  外套:
+    款式:
+    颜色:
+    材质:
+  鞋履:
+    款式:
+    颜色:
+    材质:
+  配饰:
+    首饰:
+    头饰:
+    腰带:
+    其他:
+  随身物品:
+    物品1:
+    物品2:
+  特殊装饰:
+    图案:
+    挂件:
+
+整体风格:
+  日常风格:
+  特殊场合风格:`;
+
+const DEFAULT_WORLDBOOK_PROMPT = `根据用户输入的世界观描述，生成完整的世界书设定。包括背景、时代、势力、事件、文化、科技等。`;
+
+const DEFAULT_WORLD_EXTEND_TEMPLATES = {
+    location: `地点扩展:
+  地点名称:
+  地理位置:
+  描述:
+  重要性:
+  相关事件:
+  居住/出没人物:`,
+    faction: `势力扩展:
+  势力名称:
+  类型:
+  宗旨:
+  领袖:
+  成员:
+  实力:
+  影响力范围:
+  与其他势力关系:`,
+    event: `事件扩展:
+  事件名称:
+  时间:
+  地点:
+  涉及人物:
+  起因:
+  经过:
+  结果:
+  影响:`,
+    culture: `文化扩展:
+  文化名称:
+  表现形式:
+  起源:
+  特点:
+  相关习俗:
+  禁忌:
+  代表人物:`,
+    technology: `科技扩展:
+  科技名称:
+  类型:
+  原理:
+  应用:
+  发展阶段:
+  限制:
+  发明者:`,
+    character: `重要人物扩展:
+  姓名:
+  身份:
+  外貌:
+  性格:
+  背景:
+  能力:
+  目标:
+  人际关系:`
+};
+
+if (!customTemplates.character) customTemplates.character = DEFAULT_CHAR_TEMPLATE;
+if (!customTemplates.user) customTemplates.user = DEFAULT_CHAR_TEMPLATE;
+if (!customTemplates.relationship) customTemplates.relationship = DEFAULT_RELATIONSHIP_TEMPLATE;
+if (!customTemplates.wardrobe) customTemplates.wardrobe = DEFAULT_WARDROBE_TEMPLATE;
+if (!customTemplates.worldbook) customTemplates.worldbook = DEFAULT_WORLDBOOK_PROMPT;
+if (!customTemplates.worldExtend) customTemplates.worldExtend = { ...DEFAULT_WORLD_EXTEND_TEMPLATES };
+
+// ============================================================================
+// API配置UI渲染
+// ============================================================================
+
+function renderApiConfigPanel() {
+    return `
+        <div class="apg-api-config">
+            <h4 style="margin: 0 0 12px 0; font-size: 14px;">API 配置</h4>
+            <div class="field" style="margin-bottom: 12px;">
+                <label>API 地址</label>
+                <input type="text" id="apg-api-url" placeholder="https://api.openai.com/v1" value="${escapeHtml(apiConfig.apiUrl)}">
+            </div>
+            <div class="field" style="margin-bottom: 12px;">
+                <label>API Key</label>
+                <input type="password" id="apg-api-key" placeholder="sk-..." value="${escapeHtml(apiConfig.apiKey)}">
+            </div>
+            <div class="field" style="margin-bottom: 12px;">
+                <label>模型</label>
+                <select id="apg-api-model">
+                    <option value="">请先拉取模型列表</option>
+                    ${apiConfig.availableModels.map(m => `<option value="${escapeHtml(m)}" ${apiConfig.apiModel === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+                </select>
+            </div>
+            <div class="button-group" style="margin: 12px 0;">
+                <button id="apg-test-connection">测试连接</button>
+                <button id="apg-fetch-models">拉取模型列表</button>
+                <button id="apg-use-local-api">使用酒馆本地API</button>
+            </div>
+            <div id="apg-api-status" class="apg-api-status" style="font-size: 12px; margin-top: 8px;"></div>
+        </div>
+    `;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
+}
+
+// ============================================================================
+// API功能函数
+// ============================================================================
+
+async function testApiConnection() {
+    const statusDiv = document.getElementById('apg-api-status');
+    if (!statusDiv) return;
+    
+    const url = apiConfig.apiUrl || document.getElementById('apg-api-url')?.value;
+    const key = apiConfig.apiKey || document.getElementById('apg-api-key')?.value;
+    
+    if (!url) {
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">请填写API地址</span>';
+        return;
+    }
+    
+    statusDiv.innerHTML = '<span style="color: #ff9800;">测试中...</span>';
+    
+    try {
+        const baseUrl = url.replace(/\/$/, '');
+        const response = await fetch(`${baseUrl}/models`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${key}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            statusDiv.innerHTML = '<span style="color: #4caf50;">连接成功！</span>';
+            if (typeof toastr !== 'undefined') toastr.success('API连接成功');
+        } else {
+            statusDiv.innerHTML = `<span style="color: #d32f2f;">连接失败: ${response.status}</span>`;
+            if (typeof toastr !== 'undefined') toastr.error(`连接失败: ${response.status}`);
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<span style="color: #d32f2f;">连接失败: ${e.message}</span>`;
+        if (typeof toastr !== 'undefined') toastr.error(`连接失败: ${e.message}`);
+    }
+}
+
+async function fetchModelList() {
+    const statusDiv = document.getElementById('apg-api-status');
+    const modelSelect = document.getElementById('apg-api-model');
+    
+    if (!statusDiv || !modelSelect) return;
+    
+    const url = apiConfig.apiUrl || document.getElementById('apg-api-url')?.value;
+    const key = apiConfig.apiKey || document.getElementById('apg-api-key')?.value;
+    
+    if (!url) {
+        statusDiv.innerHTML = '<span style="color: #d32f2f;">请填写API地址</span>';
+        return;
+    }
+    
+    statusDiv.innerHTML = '<span style="color: #ff9800;">拉取模型列表中...</span>';
+    
+    try {
+        const baseUrl = url.replace(/\/$/, '');
+        const response = await fetch(`${baseUrl}/models`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${key}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            let models = [];
+            
+            if (data.data && Array.isArray(data.data)) {
+                models = data.data.map(m => m.id || m);
+            } else if (Array.isArray(data)) {
+                models = data;
+            }
+            
+            if (models.length > 0) {
+                apiConfig.availableModels = models;
+                apiConfig.apiUrl = url;
+                apiConfig.apiKey = key;
+                saveApiConfig();
+                
+                modelSelect.innerHTML = models.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+                statusDiv.innerHTML = `<span style="color: #4caf50;">已获取 ${models.length} 个模型</span>`;
+                if (typeof toastr !== 'undefined') toastr.success(`已获取 ${models.length} 个模型`);
+            } else {
+                statusDiv.innerHTML = '<span style="color: #d32f2f;">未获取到模型列表</span>';
+            }
+        } else {
+            statusDiv.innerHTML = `<span style="color: #d32f2f;">获取失败: ${response.status}</span>`;
+            if (typeof toastr !== 'undefined') toastr.error(`获取失败: ${response.status}`);
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<span style="color: #d32f2f;">获取失败: ${e.message}</span>`;
+        if (typeof toastr !== 'undefined') toastr.error(`获取失败: ${e.message}`);
+    }
+}
+
+function useLocalApiConfig() {
+    try {
+        let localUrl = '';
+        let localKey = '';
+        
+        if (window.SillyTavern && window.SillyTavern.chatCompletionSettings) {
+            const settings = window.SillyTavern.chatCompletionSettings;
+            localUrl = settings.api_url || settings.url || '';
+            localKey = settings.api_key || settings.key || '';
+        }
+        
+        const context = typeof getContext !== 'undefined' ? getContext?.() : null;
+        if (context && context.chatSettings) {
+            localUrl = context.chatSettings.api_url || localUrl;
+            localKey = context.chatSettings.api_key || localKey;
+        }
+        
+        if (localUrl && localKey) {
+            apiConfig.apiUrl = localUrl;
+            apiConfig.apiKey = localKey;
+            saveApiConfig();
+            updateApiConfigUI();
+            
+            const statusDiv = document.getElementById('apg-api-status');
+            if (statusDiv) {
+                statusDiv.innerHTML = '<span style="color: #4caf50;">已读取酒馆API配置</span>';
+            }
+            if (typeof toastr !== 'undefined') toastr.success('已读取酒馆当前API配置');
+        } else {
+            if (typeof toastr !== 'undefined') toastr.warning('未找到酒馆API配置');
+        }
+    } catch (e) {
+        console.error('[APG] 读取本地API失败:', e);
+        if (typeof toastr !== 'undefined') toastr.error('读取失败');
+    }
+}
+
+function updateApiConfigUI() {
+    const urlInput = document.getElementById('apg-api-url');
+    const keyInput = document.getElementById('apg-api-key');
+    const modelSelect = document.getElementById('apg-api-model');
+    
+    if (urlInput) urlInput.value = apiConfig.apiUrl;
+    if (keyInput) keyInput.value = apiConfig.apiKey;
+    if (modelSelect) {
+        modelSelect.innerHTML = '<option value="">请先拉取模型列表</option>' + 
+            apiConfig.availableModels.map(m => `<option value="${escapeHtml(m)}" ${apiConfig.apiModel === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
+    }
+}
+
+// ============================================================================
+// API调用函数
+// ============================================================================
+
+async function callApi(messages, systemPrompt = null, options = {}) {
+    const url = apiConfig.apiUrl;
+    const key = apiConfig.apiKey;
+    const model = apiConfig.apiModel;
+    
+    if (!url || !key || !model) {
+        throw new Error('请先配置API地址、Key和模型');
+    }
+    
+    const fullMessages = [];
+    if (systemPrompt) {
+        fullMessages.push({ role: 'system', content: systemPrompt });
+    }
+    fullMessages.push(...messages);
+    
+    const baseUrl = url.replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+        },
+        body: JSON.stringify({
+            model: model,
+            messages: fullMessages,
+            temperature: options.temperature ?? 0.85,
+            max_tokens: options.max_tokens ?? 4096
+        })
+    });
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API错误 (${response.status}): ${errorText.substring(0, 200)}`);
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content;
+}
+
+// ============================================================================
+// 主函数
+// ============================================================================
+
+function initPlugin() {
+const PANEL_ID = 'ai-char-generator-panel';
+
+loadApiConfig();
+loadCustomTemplates();
+loadCustomPages();
+
+let config = {
+panelWidth: 420,
+panelHeight: 720,
+panelLeft: 20,
+panelTop: 50,
+savedTemplates: [],
+generationHistory: [],
+draftContent: {},
+relationChars: []
+};
+
+function getInitialPanelWidth() {
+    const screenWidth = window.innerWidth;
+    let initialWidth = config.panelWidth;
+    if (initialWidth > screenWidth - 40 || initialWidth === 420) {
+        initialWidth = Math.min(screenWidth - 40, 420);
+        if (initialWidth < 200) initialWidth = 200;
+    }
+    return initialWidth;
+}
+config.panelWidth = getInitialPanelWidth();
+
+try {
+const saved = localStorage.getItem('ai_char_gen_config');
+if (saved) {
+const parsed = JSON.parse(saved);
+config = { ...config, ...parsed };
+if (!config.savedTemplates) config.savedTemplates = [];
+if (!config.generationHistory) config.generationHistory = [];
+if (!config.draftContent) config.draftContent = {};
+if (!config.relationChars) config.relationChars = [];
+if (config.panelLeft + config.panelWidth > window.innerWidth - 10) {
+config.panelLeft = Math.max(10, window.innerWidth - config.panelWidth - 10);
+}
+}
+} catch (err) {}
+
+function saveConfig() {
+localStorage.setItem('ai_char_gen_config', JSON.stringify(config));
+}
+
+function addToHistory(type, input, output) {
+config.generationHistory.unshift({
+type, input: input.substring(0, 80), output,
+timestamp: new Date().toLocaleString()
+});
+if (config.generationHistory.length > 20) config.generationHistory.pop();
+saveConfig();
+refreshHistoryList();
+}
+
+function saveDraft(tabId, content) {
+config.draftContent[tabId] = content;
+saveConfig();
+}
+
+function loadDraft(tabId) {
+return config.draftContent[tabId] || '';
+}
+
+function exportTemplates() {
+const data = JSON.stringify(config.savedTemplates, null, 2);
+const blob = new Blob([data], {type: 'application/json'});
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `templates_${new Date().toISOString().slice(0,19)}.json`;
+a.click();
+URL.revokeObjectURL(url);
+if (typeof toastr !== 'undefined') toastr.success('已导出');
+}
+
+function importTemplates(file) {
+const reader = new FileReader();
+reader.onload = (e) => {
+try {
+const imported = JSON.parse(e.target.result);
+if (Array.isArray(imported)) {
+config.savedTemplates = [...config.savedTemplates, ...imported];
+saveConfig();
+refreshTemplateList();
+if (typeof toastr !== 'undefined') toastr.success(`导入 ${imported.length} 个模板`);
+} else {
+if (typeof toastr !== 'undefined') toastr.error('文件格式错误');
+}
+} catch (err) {
+if (typeof toastr !== 'undefined') toastr.error('解析失败');
+}
+};
+reader.readAsText(file);
+}
+
+function refreshHistoryList() {
+const container = document.getElementById('history-list');
+if (!container) return;
+if (config.generationHistory.length === 0) {
+container.innerHTML = '<div class="empty-state">暂无历史</div>';
+return;
+}
+container.innerHTML = config.generationHistory.map((h, i) => `
+<div class="history-item" data-index="${i}">
+<div class="history-type">${h.type}</div>
+<div class="history-time">${h.timestamp}</div>
+<div class="history-preview">${h.input}</div>
+</div>
+`).join('');
+container.querySelectorAll('.history-item').forEach(item => {
+item.onclick = () => {
+const h = config.generationHistory[parseInt(item.dataset.index)];
+if (h) {
+if (h.type === '角色卡') document.getElementById('char-result').value = h.output;
+else if (h.type === '用户人设') document.getElementById('user-result').value = h.output;
+else if (h.type === '世界书') document.getElementById('world-result').value = h.output;
+else if (h.type === '世界书扩展') document.getElementById('world-extend-result').value = h.output;
+else if (h.type === '关系描述') document.getElementById('relation-result').value = h.output;
+else if (h.type === '魔法衣橱') document.getElementById('wardrobe-result').value = h.output;
+if (typeof toastr !== 'undefined') toastr.success(`已加载: ${h.type}`);
+}
+};
+});
+}
+
+function refreshTemplateList() {
+const container = document.getElementById('template-list');
+if (!container) return;
+if (config.savedTemplates.length === 0) {
+container.innerHTML = '<div class="empty-state">暂无模板</div>';
+return;
+}
+container.innerHTML = config.savedTemplates.map((t, i) => `
+<div class="template-item">
+<span>${t.name}</span>
+<div class="template-actions">
+<button class="load-template" data-index="${i}">加载</button>
+<button class="delete-template" data-index="${i}">删除</button>
+</div>
+</div>
+`).join('');
+container.querySelectorAll('.load-template').forEach(btn => {
+btn.onclick = () => {
+const t = config.savedTemplates[parseInt(btn.dataset.index)];
+const active = document.querySelector('.tab-content.active');
+const result = active?.querySelector('.result-text');
+if (result) result.value = t.content;
+if (typeof toastr !== 'undefined') toastr.success(`已加载: ${t.name}`);
+};
+});
+container.querySelectorAll('.delete-template').forEach(btn => {
+btn.onclick = () => {
+config.savedTemplates.splice(parseInt(btn.dataset.index), 1);
+saveConfig();
+refreshTemplateList();
+if (typeof toastr !== 'undefined') toastr.success('已删除');
+};
+});
+}
+
+// ========== 角色卡 ==========
+async function generateCharacter(userInput, cardType, btn, resultArea) {
+if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+if (typeof toastr !== 'undefined') toastr.error('请先配置 API（地址、Key、模型）');
+return null;
+}
+const typeName = cardType === 'character' ? '角色卡' : '用户人设';
+const template = cardType === 'character' ? customTemplates.character : customTemplates.user;
+const systemPrompt = `根据用户输入，生成完整的${typeName}。严格按照以下YAML格式输出，所有字段都要填满，不要添加额外解释：
+
+${template}`;
+
+if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+
+try {
+const content = await callApi(
+[{ role: 'user', content: userInput }],
+systemPrompt,
+{ temperature: 0.8, max_tokens: 4000 }
+);
+let cleanedContent = content.replace(/```yaml\n?/g, '').replace(/```\n?/g, '').trim();
+if (resultArea) {
+resultArea.value = cleanedContent;
+addToHistory(typeName, userInput, cleanedContent);
+const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+if (copyBtn) copyBtn.disabled = false;
+}
+if (typeof toastr !== 'undefined') toastr.success('生成成功');
+return cleanedContent;
+} catch (err) {
+if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+return null;
+} finally {
+if (btn) { btn.disabled = false; btn.textContent = cardType === 'character' ? '生成角色卡' : '生成用户人设'; }
+}
+}
+
+// ========== 世界书 ==========
+async function generateWorldbook(userInput, btn, resultArea) {
+if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+if (typeof toastr !== 'undefined') toastr.error('请先配置 API（地址、Key、模型）');
+return null;
+}
+if (!userInput.trim()) { if (typeof toastr !== 'undefined') toastr.warning('请输入设定要求'); return null; }
+const systemPrompt = customTemplates.worldbook;
+if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+try {
+const content = await callApi(
+[{ role: 'user', content: userInput }],
+systemPrompt,
+{ temperature: 0.9, max_tokens: 4000 }
+);
+if (resultArea) {
+resultArea.value = content;
+addToHistory('世界书', userInput, content);
+const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+if (copyBtn) copyBtn.disabled = false;
+}
+if (typeof toastr !== 'undefined') toastr.success('生成成功');
+return content;
+} catch (err) {
+if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+return null;
+} finally {
+if (btn) { btn.disabled = false; btn.textContent = '生成世界书'; }
+}
+}
+
+// ========== 关系网 ==========
+let relationChars = [];
+function addRelationChar(name, desc) {
+if (!name) return;
+relationChars.push({ name, desc: desc || '' });
+config.relationChars = relationChars;
+saveConfig();
+refreshRelationList();
+}
+function removeRelationChar(index) {
+relationChars.splice(index, 1);
+config.relationChars = relationChars;
+saveConfig();
+refreshRelationList();
+}
+function refreshRelationList() {
+const container = document.getElementById('relation-list');
+if (!container) return;
+if (relationChars.length === 0) {
+container.innerHTML = '<div class="empty-state">暂无角色</div>';
+return;
+}
+container.innerHTML = relationChars.map((c, i) => `
+<div class="char-item">
+<span><strong>${c.name}</strong>${c.desc ? ` - ${c.desc.substring(0, 40)}` : ''}</span>
+<button class="delete-char" data-index="${i}">删除</button>
+</div>
+`).join('');
+container.querySelectorAll('.delete-char').forEach(btn => {
+btn.onclick = () => removeRelationChar(parseInt(btn.dataset.index));
+});
+}
+relationChars = config.relationChars || [];
+refreshRelationList();
+
+async function generateRelationText(btn, resultArea) {
+if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+if (typeof toastr !== 'undefined') toastr.error('请先配置 API（地址、Key、模型）');
+return null;
+}
+if (relationChars.length < 2) { if (typeof toastr !== 'undefined') toastr.warning('至少需要2个角色'); return null; }
+const charList = relationChars.map(c => `- ${c.name}: ${c.desc || '暂无描述'}`).join('\n');
+const systemPrompt = `根据以下角色信息，生成两个角色之间的详细关系描述。严格按照以下YAML格式输出，所有字段都要填满：
+
+${customTemplates.relationship}
+
+关系类型参考：[挚友/恋人/仇敌/师徒/家人/同事/陌生人]`;
+if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+try {
+const content = await callApi(
+[{ role: 'user', content: charList }],
+systemPrompt,
+{ temperature: 0.7, max_tokens: 3000 }
+);
+if (resultArea) {
+resultArea.value = content;
+addToHistory('关系描述', `角色数:${relationChars.length}`, content);
+const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+if (copyBtn) copyBtn.disabled = false;
+}
+if (typeof toastr !== 'undefined') toastr.success('生成成功');
+return content;
+} catch (err) {
+if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+return null;
+} finally {
+if (btn) { btn.disabled = false; btn.textContent = '生成关系描述'; }
+}
+}
+
+// ========== 魔法衣橱 ==========
+let qqClothingTemplates = { freeform: '' };
+
+function loadQQClothingTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_qq_clothing_templates`);
+        if (saved) {
+            qqClothingTemplates = { ...qqClothingTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function saveQQClothingTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_qq_clothing_templates`, JSON.stringify(qqClothingTemplates));
+    } catch(e) {}
+}
+
+async function generateWardrobe(userInput, mode, subMode, btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return null;
+    }
+    if (!userInput.trim() && mode !== 'qq') { 
+        if (typeof toastr !== 'undefined') toastr.warning('请输入内容'); 
+        return null; 
+    }
+    
+    let systemPrompt = '';
+    
+    if (mode === 'keyword') {
+        systemPrompt = `根据用户输入的关键词，生成外貌、体型、服饰等详细描述。严格按照以下YAML格式输出，所有字段都要填满。只描述客观事实，直接说明是什么样的衣服、什么样的头发、什么样的饰品。不渲染美感，仅呈现细节。
+
+${customTemplates.wardrobe}`;
+    } else if (mode === 'character') {
+        systemPrompt = `根据用户输入的人设，推断这个角色平时会穿什么样的衣服、有什么样的外貌特征。严格按照以下YAML格式输出。要根据人设的性格、身份、职业合理推断，不要凭空想象。
+
+${customTemplates.wardrobe}`;
+    } else if (mode === 'scene') {
+        systemPrompt = `根据用户输入的剧情片段，分析其中角色在此时应该穿什么样的衣服、有什么样的外貌状态。严格按照以下YAML格式输出。要根据剧情场景、角色状态合理推断。
+
+${customTemplates.wardrobe}`;
+    } else if (mode === 'qq') {
+        let template = qqClothingTemplates.freeform || '';
+        if (template && template.trim()) {
+            systemPrompt = `根据用户输入（或留空则自由发挥），生成QQ服装的详细描述。参考以下用户自定义的模板进行输出：
+
+${template}
+
+如果用户提供了具体内容，按用户要求生成。如果用户留空，则根据常识自由发挥。`;
+        } else {
+            systemPrompt = `根据用户输入（或留空则自由发挥），生成QQ服装的详细描述。用户输入会提供服装要求，请生成完整的服装描述。如果留空则自由发挥。输出格式自由，用自然段落描述。`;
+        }
+    }
+    
+    if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+    try {
+        let userMessage = userInput;
+        if (mode === 'qq' && (!userInput || !userInput.trim())) {
+            userMessage = '请自由发挥，生成一套QQ服装的描述';
+        }
+        
+        const content = await callApi(
+            [{ role: 'user', content: userMessage }],
+            systemPrompt,
+            { temperature: 0.8, max_tokens: 4000 }
+        );
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('魔法衣橱', `${mode}/${subMode}: ${userInput.substring(0, 60)}`, content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success('生成成功');
+        return content;
+    } catch (err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+        return null;
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '生成衣橱'; }
+    }
+}
+
+// ========== 批量生成角色卡 ==========
+async function batchGenerateCharacters(userInput, btn, resultArea) {
+if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+if (typeof toastr !== 'undefined') toastr.error('请先配置 API（地址、Key、模型）');
+return null;
+}
+const lines = userInput.split('\n').filter(l => l.trim());
+if (lines.length === 0) { if (typeof toastr !== 'undefined') toastr.warning('请输入角色设定，每行一个'); return null; }
+
+const systemPrompt = `根据用户输入，为每个角色生成完整的角色卡。严格按照以下YAML格式输出，每个角色用 "---" 分隔。所有字段都要填满。
+
+${customTemplates.character}`;
+
+if (btn) { btn.disabled = true; btn.textContent = '批量生成中...'; }
+
+let results = [];
+for (let i = 0; i < lines.length; i++) {
+const input = lines[i];
+try {
+const content = await callApi(
+[{ role: 'user', content: input }],
+systemPrompt,
+{ temperature: 0.8, max_tokens: 4000 }
+);
+let cleanedContent = content.replace(/```yaml\n?/g, '').replace(/```\n?/g, '').trim();
+results.push(`--- ${input} ---\n${cleanedContent}`);
+} catch (err) {
+results.push(`[失败] ${input}: ${err.message}`);
+}
+}
+
+const finalResult = results.join('\n\n');
+if (resultArea) {
+resultArea.value = finalResult;
+addToHistory('批量角色卡', `${lines.length}个角色`, finalResult);
+const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+if (copyBtn) copyBtn.disabled = false;
+}
+if (typeof toastr !== 'undefined') toastr.success(`生成完成，共 ${lines.length} 个角色`);
+if (btn) { btn.disabled = false; btn.textContent = '批量生成'; }
+}
+
+// ========== 复制功能 ==========
+function copyToClipboard(text) {
+if (!text || !text.trim()) {
+if (typeof toastr !== 'undefined') toastr.warning('没有内容可复制');
+return;
+}
+navigator.clipboard.writeText(text).then(() => {
+if (typeof toastr !== 'undefined') toastr.success('已复制');
+}).catch(() => {
+if (typeof toastr !== 'undefined') toastr.error('复制失败');
+});
+}
+
+// ========== 世界书扩展 ==========
+let selectedExtendTypes = [];
+
+function updateExtendTypes() {
+const checkboxes = document.querySelectorAll('.extend-type-checkbox');
+selectedExtendTypes = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+const btn = document.getElementById('world-extend-generate');
+if (btn) btn.disabled = selectedExtendTypes.length === 0;
+}
+
+async function generateWorldExtend(btn) {
+if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+if (typeof toastr !== 'undefined') toastr.error('请先配置 API（地址、Key、模型）');
+return;
+}
+if (selectedExtendTypes.length === 0) { if (typeof toastr !== 'undefined') toastr.warning('请至少选择一种扩展类型'); return; }
+
+const sourceContent = document.getElementById('world-extend-source')?.value;
+if (!sourceContent || !sourceContent.trim()) {
+if (typeof toastr !== 'undefined') toastr.warning('请输入要扩展的内容');
+return;
+}
+
+const typeNames = {
+location: '地点',
+faction: '势力',
+event: '事件',
+culture: '文化',
+technology: '科技',
+character: '重要人物'
+};
+const typeDesc = selectedExtendTypes.map(t => typeNames[t]).join('、');
+
+let systemPrompt = `根据以下世界观设定，生成详细的${typeDesc}扩展。`;
+for (const type of selectedExtendTypes) {
+if (customTemplates.worldExtend[type]) {
+systemPrompt += `\n\n${type}的格式要求：\n${customTemplates.worldExtend[type]}`;
+}
+}
+systemPrompt += `\n\n每个类型独立成段，严格按照格式输出。`;
+
+if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+try {
+const content = await callApi(
+[{ role: 'user', content: sourceContent }],
+systemPrompt,
+{ temperature: 0.8, max_tokens: 4000 }
+);
+const resultArea = document.getElementById('world-extend-result');
+if (resultArea) {
+resultArea.value = content;
+addToHistory('世界书扩展', `类型:${typeDesc}`, content);
+const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+if (copyBtn) copyBtn.disabled = false;
+}
+if (typeof toastr !== 'undefined') toastr.success('生成成功');
+} catch (err) { if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`); }
+finally { if (btn) { btn.disabled = false; btn.textContent = '生成扩展'; } }
+}
+
+// ========== 模板存储 ==========
+let extraTemplates = {
+    identity: '', relation: '', scene: '',
+    gameplay_space: '', gameplay_power: '', gameplay_psychological: '', gameplay_plot: ''
+};
+
+function loadExtraTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_extra_templates`);
+        if (saved) {
+            extraTemplates = { ...extraTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function saveExtraTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_extra_templates`, JSON.stringify(extraTemplates));
+    } catch(e) {}
+}
+
+// ========== 小说生成器 ==========
+let novelTemplates = {
+    systemPrompt: '你是一个小说创意生成器。根据用户的要求生成小说设定和章节内容。\n\n书名要求：2-8个字，有吸引力，符合题材。\n文案要求：150-300字，包含人设介绍和故事开端悬念，像小说封底简介。\n\n章节内容要求：\n- 严格按照用户要求的章数生成，每章{wordCount}字左右\n- 采用白描手法，只写发生了什么，不写情绪、不写氛围、不写心理活动\n- 每章包含：时间、地点、人物、行动、结果\n- 转折和伏笔可以有但不是必须，用事件来呈现，不要用解释性语言\n- 禁止使用：感到、觉得、仿佛、似乎、气氛、情绪、美丽、漂亮、动人\n- 字数达标靠足够的事件细节，不是靠形容词堆砌\n\n输出格式：\n书名：《xxx》\n文案：xxx\n\n章节列表：\n第1章\n[章节内容]\n\n第2章\n[章节内容]\n\n...\n\n必须生成完整的{chapterCount}章，每章之间用"第X章"分隔。',
+    continuePrompt: '你正在续写小说《{title}》。\n前面已写完第1-{doneCount}章，以下是已有章节的内容：\n{chapters}\n\n请继续生成第{start}到第{end}章的内容。\n保持故事连贯，人物不OOC，每章{wordCount}字左右。\n采用白描手法，只写发生了什么。\n必须生成完整的{chapterCount}章。\n只输出新增的章节，格式：\n第X章\n[章节内容]\n\n不要重复已有内容，不要输出书名和文案。'
+};
+
+let currentNovel = { title: '', blurb: '', chapters: [], style: '', wordCount: 500 };
+
+function loadNovelTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_novel_templates`);
+        if (saved) {
+            novelTemplates = { ...novelTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function saveNovelTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_novel_templates`, JSON.stringify(novelTemplates));
+    } catch(e) {}
+}
+
+function saveCurrentNovel() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_current_novel`, JSON.stringify(currentNovel));
+    } catch(e) {}
+}
+
+function loadCurrentNovel() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_current_novel`);
+        if (saved) {
+            currentNovel = JSON.parse(saved);
+            displayNovel();
+        }
+    } catch(e) {}
+}
+
+function displayNovel() {
+    const titleEl = document.getElementById('novel-title');
+    const blurbEl = document.getElementById('novel-blurb');
+    const chaptersContainer = document.getElementById('novel-chapters');
+    
+    if (titleEl) titleEl.textContent = currentNovel.title || '未生成';
+    if (blurbEl) blurbEl.value = currentNovel.blurb || '';
+    
+    if (chaptersContainer) {
+        if (currentNovel.chapters.length === 0) {
+            chaptersContainer.innerHTML = '<div class="empty-state">暂无章节，请先生成小说</div>';
+        } else {
+            chaptersContainer.innerHTML = currentNovel.chapters.map((ch, idx) => `
+                <div class="chapter-card">
+                    <div class="chapter-title">第${idx+1}章</div>
+                    <textarea class="chapter-content-textarea" readonly>${escapeHtml(ch.content)}</textarea>
+                </div>
+            `).join('');
+        }
+    }
+}
+
+async function generateNovel(isContinue = false) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const userInput = document.getElementById('novel-user-input')?.value || '';
+    const styleTags = document.getElementById('novel-style-tags')?.value || '';
+    const wordCount = parseInt(document.getElementById('novel-word-count')?.value || '500');
+    let chapterCount = parseInt(document.getElementById('novel-chapter-count')?.value || '5');
+    
+    if (wordCount < 300 || wordCount > 1000) {
+        if (typeof toastr !== 'undefined') toastr.warning('章节字数请在300-1000之间');
+        return;
+    }
+    if (chapterCount < 1 || chapterCount > 20) {
+        if (typeof toastr !== 'undefined') toastr.warning('生成章数请在1-20之间');
+        return;
+    }
+    
+    let systemPrompt = novelTemplates.systemPrompt
+        .replace(/\{wordCount\}/g, wordCount)
+        .replace(/\{chapterCount\}/g, chapterCount);
+    let userMessage = '';
+    
+    if (isContinue) {
+        if (currentNovel.chapters.length === 0) {
+            if (typeof toastr !== 'undefined') toastr.warning('没有已有小说，请先生成');
+            return;
+        }
+        const existingChapters = currentNovel.chapters.map((ch, i) => `第${i+1}章\n${ch.content.substring(0, 200)}...`).join('\n\n');
+        let continuePrompt = novelTemplates.continuePrompt;
+        
+        systemPrompt = continuePrompt
+            .replace('{title}', currentNovel.title)
+            .replace('{doneCount}', currentNovel.chapters.length)
+            .replace('{chapters}', existingChapters)
+            .replace('{start}', currentNovel.chapters.length + 1)
+            .replace('{end}', currentNovel.chapters.length + chapterCount)
+            .replace('{wordCount}', wordCount)
+            .replace('{chapterCount}', chapterCount);
+        
+        userMessage = `请续写第${currentNovel.chapters.length+1}到第${currentNovel.chapters.length+chapterCount}章，共${chapterCount}章`;
+    } else {
+        let styleText = '';
+        if (styleTags) {
+            styleText = `风格标签：${styleTags}。请从这些标签中选择1-2个作为主要风格。`;
+        }
+        systemPrompt = systemPrompt + `\n\n${styleText}`;
+        userMessage = userInput || '请随机生成一个有趣的小说设定';
+    }
+    
+    const btn = isContinue ? document.getElementById('novel-continue') : document.getElementById('novel-generate');
+    if (btn) { btn.disabled = true; btn.textContent = isContinue ? '续写中...' : '生成中...'; }
+    
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: userMessage }],
+            systemPrompt,
+            { temperature: 0.85, max_tokens: 8000 }
+        );
+        
+        if (!isContinue) {
+            const titleMatch = content.match(/书名[：:]\s*《(.+?)》/);
+            const blurbMatch = content.match(/文案[：:]\s*([\s\S]+?)(?=\n\n章节|$)/);
+            
+            currentNovel.title = titleMatch ? titleMatch[1] : '未命名';
+            currentNovel.blurb = blurbMatch ? blurbMatch[1].trim() : '';
+            currentNovel.wordCount = wordCount;
+            currentNovel.style = styleTags;
+            currentNovel.chapters = [];
+            
+            const chapterRegex = /第(\d+)章\s*\n([\s\S]+?)(?=\n第\d+章|$)/g;
+            let match;
+            let chaptersFound = [];
+            while ((match = chapterRegex.exec(content)) !== null) {
+                chaptersFound.push({ title: '', content: match[2].trim() });
+            }
+            
+            if (chaptersFound.length === 0) {
+                const lines = content.split('\n');
+                let currentChapter = '';
+                let inChapter = false;
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].match(/第\d+章/)) {
+                        if (currentChapter) {
+                            chaptersFound.push({ title: '', content: currentChapter.trim() });
+                        }
+                        currentChapter = '';
+                        inChapter = true;
+                    } else if (inChapter) {
+                        currentChapter += lines[i] + '\n';
+                    }
+                }
+                if (currentChapter) {
+                    chaptersFound.push({ title: '', content: currentChapter.trim() });
+                }
+            }
+            
+            currentNovel.chapters = chaptersFound;
+            
+            if (currentNovel.chapters.length < chapterCount) {
+                if (typeof toastr !== 'undefined') toastr.warning(`只生成了${currentNovel.chapters.length}章，未达到${chapterCount}章，请重试`);
+            }
+            
+            addToHistory('小说生成器', userInput || '随机生成', content);
+        } else {
+            const chapterRegex = /第(\d+)章\s*\n([\s\S]+?)(?=\n第\d+章|$)/g;
+            let match;
+            while ((match = chapterRegex.exec(content)) !== null) {
+                currentNovel.chapters.push({ title: '', content: match[2].trim() });
+            }
+            addToHistory('小说生成器', `续写${chapterCount}章`, content);
+        }
+        
+        saveCurrentNovel();
+        displayNovel();
+        if (typeof toastr !== 'undefined') toastr.success(isContinue ? '续写成功' : `生成成功，共${currentNovel.chapters.length}章`);
+        
+        const copyBtn = document.getElementById('novel-copy');
+        if (copyBtn) copyBtn.disabled = false;
+        
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = isContinue ? '续写' : '生成新小说'; }
+    }
+}
+
+function clearNovel() {
+    if (confirm('清空当前小说？所有未保存的章节将丢失。')) {
+        currentNovel = { title: '', blurb: '', chapters: [], style: '', wordCount: 500 };
+        saveCurrentNovel();
+        displayNovel();
+        if (typeof toastr !== 'undefined') toastr.success('已清空');
+    }
+}
+
+function copyNovel() {
+    let text = `书名：《${currentNovel.title}》\n\n文案：\n${currentNovel.blurb}\n\n章节内容：\n`;
+    currentNovel.chapters.forEach((ch, i) => {
+        text += `\n第${i+1}章\n${ch.content}\n`;
+    });
+    copyToClipboard(text);
+}
+
+// ========== 故事生成器 ==========
+async function generateStory(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    const userWish = document.getElementById('story-user-wish')?.value || '';
+    const count = parseInt(document.getElementById('story-count')?.value || '3');
+    if (isNaN(count) || count < 1 || count > 20) {
+        if (typeof toastr !== 'undefined') toastr.warning('数量请在1-20之间');
+        return;
+    }
+    
+    const systemPrompt = `你是一个故事创意生成器。请根据用户的要求生成 ${count} 个不同的故事设定。
+
+身份库：${extraTemplates.identity || '（用户未填写，请根据常识补充）'}
+关系库：${extraTemplates.relation || '（用户未填写，请根据常识补充）'}
+场景库：${extraTemplates.scene || '（用户未填写，请根据常识补充）'}
+空间环境玩法：${extraTemplates.gameplay_space || '（用户未填写）'}
+权力动态玩法：${extraTemplates.gameplay_power || '（用户未填写）'}
+心理情境玩法：${extraTemplates.gameplay_psychological || '（用户未填写）'}
+剧情玩法：${extraTemplates.gameplay_plot || '（用户未填写）'}
+
+用户要求：${userWish || '无具体要求，请随机生成'}
+
+生成规则：
+1. 每个故事包含：身份A、身份B、关系性质、场景、玩法组合（3-6个标签）
+2. 输出格式：
+【故事1】
+身份A：xxx
+身份B：xxx
+关系：xxx
+场景：xxx
+玩法：标签1 + 标签2 + 标签3
+---
+3. 禁止多余形容词，只写干货
+4. 如果用户有要求，必须满足用户要求
+5. 如果用户模板为空，请根据常识补充`;
+
+    if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: `请生成 ${count} 个不同的故事设定，要求：${userWish || '随机'}` }],
+            systemPrompt,
+            { temperature: 0.85, max_tokens: 4000 }
+        );
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('故事生成器', userWish || '随机', content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success(`生成 ${count} 个故事成功`);
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '批量生成故事'; }
+    }
+}
+
+// ========== 玩法生成器 ==========
+async function generatePlayMix(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const userWish = document.getElementById('playmix-user-wish')?.value || '';
+    const groupCount = parseInt(document.getElementById('playmix-group-count')?.value || '1');
+    if (isNaN(groupCount) || groupCount < 1 || groupCount > 20) {
+        if (typeof toastr !== 'undefined') toastr.warning('组数请在1-20之间');
+        return;
+    }
+    
+    const systemPrompt = `你是一个创意标签生成器。请根据用户的要求生成 ${groupCount} 组人设和玩法组合，每组包含10个人设和10组玩法。
+
+用户要求：${userWish || '无具体要求，请随机生成'}
+
+生成规则：
+1. 人设格式：A x B（例如：破产少爷 x 腹黑大小姐）
+2. 玩法格式：2-5个标签用" + "连接（例如：户外 + 轻SM + 指令服从）
+3. 人设和玩法完全独立，不需要关联
+4. 禁止多余形容词，只输出标签
+5. 每组输出格式：
+=== 第N组 ===
+【人设十组】
+1. xxx x xxx
+2. xxx x xxx
+...
+10. xxx x xxx
+
+【玩法十组】
+1. xxx + xxx
+2. xxx + xxx
+...
+10. xxx + xxx
+
+6. 可以自由发挥，不限于常见组合
+7. 不同组之间要有差异，不要重复
+8. 如果用户有要求，必须满足用户要求`;
+
+    if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: `请生成 ${groupCount} 组不同的人设和玩法，要求：${userWish || '随机'}` }],
+            systemPrompt,
+            { temperature: 0.9, max_tokens: 4000 }
+        );
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('玩法生成器', userWish || '随机', content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success(`生成 ${groupCount} 组成功`);
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '生成人设+玩法'; }
+    }
+}
+
+// ========== 小剧场生成器 ==========
+let theaterTemplates = {
+    systemPrompt: '你是一个小剧场/番外剧情生成器。根据用户的关键词（或随机生成）生成小剧场设定。\n\n输出格式要求：\n每个小剧场以"现在立即停止正文输出，仅输出以下番外："开头，然后是具体的剧情设定描述，最后以"不少于3000字。"结尾。\n\n示例：\n现在立即停止正文输出，仅输出以下番外：{{user}}因为一场意外穿越到古代，成为了{{char}}的丫鬟，{{user}}以为自己隐藏得很好，却不知道{{char}}早就看穿了她的身份...不少于3000字。\n\n生成规则：\n1. 剧情要完整，包含起因、冲突、悬念\n2. 使用{{user}}和{{char}}作为角色占位符\n3. 不要多余形容词，只写核心剧情\n4. 如果用户提供了关键词，必须融入关键词\n5. 不同小剧场之间要有明显差异'
+};
+
+function loadTheaterTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_theater_templates`);
+        if (saved) {
+            theaterTemplates = { ...theaterTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function saveTheaterTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_theater_templates`, JSON.stringify(theaterTemplates));
+    } catch(e) {}
+}
+
+async function generateTheater(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const keywords = document.getElementById('theater-keywords')?.value || '';
+    const count = parseInt(document.getElementById('theater-count')?.value || '3');
+    if (isNaN(count) || count < 1 || count > 20) {
+        if (typeof toastr !== 'undefined') toastr.warning('数量请在1-20之间');
+        return;
+    }
+    
+    let systemPrompt = theaterTemplates.systemPrompt;
+    let userMessage = keywords ? `请根据以下关键词生成 ${count} 个小剧场：${keywords}` : `请随机生成 ${count} 个小剧场`;
+    
+    if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: userMessage }],
+            systemPrompt,
+            { temperature: 0.85, max_tokens: 4000 }
+        );
+        
+        let lines = content.split('\n');
+        let result = '';
+        let theaterIndex = 1;
+        let currentTheater = '';
+        
+        for (let line of lines) {
+            if (line.includes('现在立即停止正文输出')) {
+                if (currentTheater) {
+                    result += `【小剧场${theaterIndex}】\n${currentTheater.trim()}\n---\n`;
+                    theaterIndex++;
+                    currentTheater = '';
+                }
+                currentTheater = line + '\n';
+            } else if (currentTheater) {
+                currentTheater += line + '\n';
+            } else if (line.trim()) {
+                if (!result && theaterIndex === 1) {
+                    result += `【小剧场${theaterIndex}】\n${line}\n---\n`;
+                    theaterIndex++;
+                }
+            }
+        }
+        if (currentTheater) {
+            result += `【小剧场${theaterIndex}】\n${currentTheater.trim()}\n---\n`;
+        }
+        
+        if (resultArea) {
+            resultArea.value = result || content;
+            addToHistory('小剧场生成器', keywords || '随机生成', result || content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success(`生成 ${count} 个小剧场成功`);
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '生成小剧场'; }
+    }
+}
+
+// ========== 心理学分析 ==========
+let psychologyTemplates = {
+    analysisPrompt: `你是一位专业的心理学分析师。根据用户提供的人设或剧情，进行深入的人格心理分析。...`,
+    mbtiPrompt: `你是一位MBTI人格分析专家...`
+};
+
+function loadPsychologyTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_psychology_templates`);
+        if (saved) {
+            psychologyTemplates = { ...psychologyTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function savePsychologyTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_psychology_templates`, JSON.stringify(psychologyTemplates));
+    } catch(e) {}
+}
+
+async function generatePsychologyAnalysis(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const userInput = document.getElementById('psychology-input')?.value;
+    if (!userInput || !userInput.trim()) {
+        if (typeof toastr !== 'undefined') toastr.warning('请输入要分析的人设或剧情');
+        return;
+    }
+    
+    const systemPrompt = psychologyTemplates.analysisPrompt;
+    
+    if (btn) { btn.disabled = true; btn.textContent = '分析中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: `请分析以下角色/剧情：\n${userInput}` }],
+            systemPrompt,
+            { temperature: 0.7, max_tokens: 6000 }
+        );
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('心理分析', userInput.substring(0, 80), content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success('分析完成');
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '生成分析报告'; }
+    }
+}
+
+async function generateMBTITest(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const character = document.getElementById('mbti-character-input')?.value;
+    if (!character || !character.trim()) {
+        if (typeof toastr !== 'undefined') toastr.warning('请输入要测试的角色设定');
+        return;
+    }
+    
+    let systemPrompt = psychologyTemplates.mbtiPrompt.replace('{character}', character);
+    
+    if (btn) { btn.disabled = true; btn.textContent = '分析中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: `请分析以下角色的MBTI类型：\n${character}` }],
+            systemPrompt,
+            { temperature: 0.6, max_tokens: 2000 }
+        );
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('MBTI分析', character.substring(0, 80), content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success('分析完成');
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '分析MBTI'; }
+    }
+}
+
+// ========== 文风生成 ==========
+let styleGenTemplates = { systemPrompt: `你是一位文学风格分析师...` };
+
+function loadStyleGenTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_stylegen_templates`);
+        if (saved) {
+            styleGenTemplates = { ...styleGenTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function saveStyleGenTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_stylegen_templates`, JSON.stringify(styleGenTemplates));
+    } catch(e) {}
+}
+
+async function generateStyle(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const mode = document.querySelector('input[name="style-mode"]:checked')?.value || 'analyze';
+    const userInput = document.getElementById('style-input')?.value;
+    const count = parseInt(document.getElementById('style-count')?.value || '1');
+    
+    if (!userInput || !userInput.trim()) {
+        if (typeof toastr !== 'undefined') toastr.warning('请输入文字片段或关键词或作家名');
+        return;
+    }
+    if (isNaN(count) || count < 1 || count > 20) {
+        if (typeof toastr !== 'undefined') toastr.warning('数量请在1-20之间');
+        return;
+    }
+    
+    let systemPrompt = styleGenTemplates.systemPrompt;
+    let userMessage = mode === 'analyze' 
+        ? `请分析以下文字片段，生成 ${count} 个不同的文风档案：\n\n${userInput}`
+        : `请根据以下内容（关键词或作家名），生成 ${count} 个不同的文风档案：\n\n${userInput}`;
+    
+    if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: userMessage }],
+            systemPrompt,
+            { temperature: 0.85, max_tokens: 8000 }
+        );
+        
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('文风生成', userInput.substring(0, 80), content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success(`生成 ${count} 个文风成功`);
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '生成文风'; }
+    }
+}
+
+// ========== 预设生成 ==========
+let presetGenTemplates = { systemPrompt: `你是一个指令/预设生成器...` };
+
+function loadPresetGenTemplates() {
+    try {
+        const saved = localStorage.getItem(`${EXTENSION_NAME}_presetgen_templates`);
+        if (saved) {
+            presetGenTemplates = { ...presetGenTemplates, ...JSON.parse(saved) };
+        }
+    } catch(e) {}
+}
+
+function savePresetGenTemplates() {
+    try {
+        localStorage.setItem(`${EXTENSION_NAME}_presetgen_templates`, JSON.stringify(presetGenTemplates));
+    } catch(e) {}
+}
+
+async function generatePreset(btn, resultArea) {
+    if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+        if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+        return;
+    }
+    
+    const userInput = document.getElementById('preset-input')?.value;
+    const count = parseInt(document.getElementById('preset-count')?.value || '1');
+    
+    if (!userInput || !userInput.trim()) {
+        if (typeof toastr !== 'undefined') toastr.warning('请输入关键词');
+        return;
+    }
+    if (isNaN(count) || count < 1 || count > 20) {
+        if (typeof toastr !== 'undefined') toastr.warning('数量请在1-20之间');
+        return;
+    }
+    
+    let systemPrompt = presetGenTemplates.systemPrompt;
+    let userMessage = `请根据以下关键词生成 ${count} 个预设指令：\n\n${userInput}`;
+    
+    if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+    try {
+        const content = await callApi(
+            [{ role: 'user', content: userMessage }],
+            systemPrompt,
+            { temperature: 0.85, max_tokens: 4000 }
+        );
+        
+        if (resultArea) {
+            resultArea.value = content;
+            addToHistory('预设生成', userInput.substring(0, 80), content);
+            const copyBtn = resultArea.parentElement?.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.disabled = false;
+        }
+        if (typeof toastr !== 'undefined') toastr.success(`生成 ${count} 个预设成功`);
+    } catch(err) {
+        if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '生成预设'; }
+    }
+}
+
+// ========== 自定义页面管理器 ==========
+let editingPageId = null;
+
+function renderCustomPagesManager() {
+    let html = `
+        <div class="custom-page-editor">
+            <div class="custom-page-form">
+                <h4>${editingPageId ? '编辑自定义页面' : '新建自定义页面'}</h4>
+                <div class="field">
+                    <label>页面名称</label>
+                    <input type="text" id="custom-page-name" placeholder="例如：我的生成器">
+                </div>
+                <div class="field">
+                    <label>子模式配置（可添加多个，每个子模式对应一个模板）</label>
+                    <div id="custom-submodes-container"></div>
+                    <div class="flex-row" style="margin-top: 8px;">
+                        <button id="add-submode-row" type="button" class="menu_button" style="flex:1;">+ 添加子模式</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>公共输入框配置（可选，所有子模式共用）</label>
+                    <div id="custom-inputs-container"></div>
+                    <div class="flex-row" style="margin-top: 8px;">
+                        <button id="add-input-row" type="button" class="menu_button" style="flex:1;">+ 添加输入框</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>显示生成数量滑块</label>
+                    <select id="custom-show-count">
+                        <option value="true">是</option>
+                        <option value="false">否</option>
+                    </select>
+                </div>
+                <div class="button-group">
+                    <button id="save-custom-page" class="primary-btn">保存页面</button>
+                    ${editingPageId ? '<button id="cancel-edit-page" class="menu_button">取消编辑</button>' : ''}
+                </div>
+            </div>
+            <div class="custom-page-list">
+                <h4>已有页面</h4>
+                <div id="custom-pages-list"></div>
+            </div>
+        </div>
+    `;
+    return html;
+}
+
+function addSubmodeRowToForm(name = '', id = '') {
+    const container = document.getElementById('custom-submodes-container');
+    const idx = container.children.length;
+    const rowHtml = `
+        <div class="custom-submode-row" data-idx="${idx}">
+            <input type="text" class="submode-id" placeholder="子模式标识" value="${escapeHtml(id || 'submode'+(idx+1))}" style="width: 120px;">
+            <input type="text" class="submode-name" placeholder="显示名称" value="${escapeHtml(name || '子模式'+(idx+1))}" style="width: 120px;">
+            <button class="remove-submode-row">删除</button>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', rowHtml);
+    container.lastElementChild.querySelector('.remove-submode-row').onclick = function() {
+        this.closest('.custom-submode-row').remove();
+    };
+}
+
+function addInputRowToForm(id = '', label = '', type = 'textarea', placeholder = '') {
+    const container = document.getElementById('custom-inputs-container');
+    const idx = container.children.length;
+    const rowHtml = `
+        <div class="custom-input-row" data-idx="${idx}">
+            <input type="text" class="input-id" placeholder="变量名" value="${escapeHtml(id || 'input'+(idx+1))}" style="width: 100px;">
+            <input type="text" class="input-label" placeholder="显示标签" value="${escapeHtml(label || '输入框'+(idx+1))}" style="width: 100px;">
+            <select class="input-type">
+                <option value="textarea" ${type === 'textarea' ? 'selected' : ''}>多行文本</option>
+                <option value="text" ${type === 'text' ? 'selected' : ''}>单行文本</option>
+                <option value="number" ${type === 'number' ? 'selected' : ''}>数字</option>
+                <option value="range" ${type === 'range' ? 'selected' : ''}>滑块</option>
+            </select>
+            <input type="text" class="input-placeholder" placeholder="占位提示" value="${escapeHtml(placeholder || '')}" style="width: 120px;">
+            <button class="remove-input-row">删除</button>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', rowHtml);
+    container.lastElementChild.querySelector('.remove-input-row').onclick = function() {
+        this.closest('.custom-input-row').remove();
+    };
+}
+
+function refreshCustomPagesUI() {
+    const container = document.getElementById('custom-pages-list');
+    if (!container) return;
+    
+    if (customPages.length === 0) {
+        container.innerHTML = '<div class="empty-state">暂无自定义页面，点击上方按钮创建</div>';
+    } else {
+        container.innerHTML = customPages.map((page, idx) => `
+            <div class="custom-page-item" data-id="${page.id}">
+                <div class="custom-page-info">
+                    <span class="custom-page-name">${escapeHtml(page.name)}</span>
+                    <span class="custom-page-status ${page.enabled ? 'enabled' : 'disabled'}">${page.enabled ? '启用' : '禁用'}</span>
+                </div>
+                <div class="custom-page-actions">
+                    <button class="edit-custom-page" data-id="${page.id}">编辑</button>
+                    <button class="toggle-custom-page" data-id="${page.id}">${page.enabled ? '禁用' : '启用'}</button>
+                    <button class="delete-custom-page" data-id="${page.id}">删除</button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    document.querySelectorAll('.edit-custom-page').forEach(btn => {
+        btn.onclick = () => {
+            const page = customPages.find(p => p.id === btn.dataset.id);
+            if (page) loadPageToForm(page);
+        };
+    });
+    
+    document.querySelectorAll('.toggle-custom-page').forEach(btn => {
+        btn.onclick = () => {
+            const page = customPages.find(p => p.id === btn.dataset.id);
+            if (page) {
+                page.enabled = !page.enabled;
+                saveCustomPages();
+                refreshCustomPagesUI();
+                rebuildTabsAndContents();
+                refreshTemplateEditor();
+                if (typeof toastr !== 'undefined') toastr.success(`${page.name} ${page.enabled ? '已启用' : '已禁用'}`);
+            }
+        };
+    });
+    
+    document.querySelectorAll('.delete-custom-page').forEach(btn => {
+        btn.onclick = () => {
+            if (confirm('确定删除此页面吗？')) {
+                deleteCustomPage(btn.dataset.id);
+            }
+        };
+    });
+}
+
+function loadPageToForm(page) {
+    editingPageId = page.id;
+    document.getElementById('custom-page-name').value = page.name;
+    document.getElementById('custom-show-count').value = page.showCount !== false ? 'true' : 'false';
+    
+    const submodeContainer = document.getElementById('custom-submodes-container');
+    submodeContainer.innerHTML = '';
+    (page.submodes || []).forEach((submode, idx) => {
+        addSubmodeRowToForm(submode.name, submode.id);
+    });
+    
+    const inputContainer = document.getElementById('custom-inputs-container');
+    inputContainer.innerHTML = '';
+    (page.inputs || []).forEach((input, idx) => {
+        addInputRowToForm(input.id, input.label, input.type, input.placeholder);
+    });
+    
+    const formTitle = document.querySelector('.custom-page-form h4');
+    if (formTitle) formTitle.textContent = '编辑自定义页面';
+    
+    const btnGroup = document.querySelector('.custom-page-form .button-group');
+    if (btnGroup && !document.getElementById('cancel-edit-page')) {
+        const cancelBtn = document.createElement('button');
+        cancelBtn.id = 'cancel-edit-page';
+        cancelBtn.className = 'menu_button';
+        cancelBtn.textContent = '取消编辑';
+        cancelBtn.onclick = () => clearForm();
+        btnGroup.appendChild(cancelBtn);
+    }
+}
+
+function clearForm() {
+    editingPageId = null;
+    document.getElementById('custom-page-name').value = '';
+    document.getElementById('custom-show-count').value = 'true';
+    document.getElementById('custom-submodes-container').innerHTML = '';
+    document.getElementById('custom-inputs-container').innerHTML = '';
+    
+    const formTitle = document.querySelector('.custom-page-form h4');
+    if (formTitle) formTitle.textContent = '新建自定义页面';
+    
+    const cancelBtn = document.getElementById('cancel-edit-page');
+    if (cancelBtn) cancelBtn.remove();
+}
+
+function bindCustomPageManagerEvents() {
+    const addSubmodeBtn = document.getElementById('add-submode-row');
+    if (addSubmodeBtn) addSubmodeBtn.onclick = () => addSubmodeRowToForm();
+    
+    const addInputBtn = document.getElementById('add-input-row');
+    if (addInputBtn) addInputBtn.onclick = () => addInputRowToForm();
+    
+    const saveBtn = document.getElementById('save-custom-page');
+    if (saveBtn) {
+        saveBtn.onclick = () => {
+            const name = document.getElementById('custom-page-name').value.trim();
+            if (!name) {
+                if (typeof toastr !== 'undefined') toastr.warning('请输入页面名称');
+                return;
+            }
+            
+            const submodeRows = document.querySelectorAll('#custom-submodes-container .custom-submode-row');
+            const submodes = [];
+            submodeRows.forEach((row) => {
+                const id = row.querySelector('.submode-id').value.trim();
+                const displayName = row.querySelector('.submode-name').value.trim();
+                if (id && displayName) submodes.push({ id: id, name: displayName });
+            });
+            
+            if (submodes.length === 0) {
+                if (typeof toastr !== 'undefined') toastr.warning('请至少添加一个子模式');
+                return;
+            }
+            
+            const inputRows = document.querySelectorAll('#custom-inputs-container .custom-input-row');
+            const inputs = [];
+            inputRows.forEach((row) => {
+                const id = row.querySelector('.input-id').value.trim();
+                if (!id) return;
+                inputs.push({
+                    id: id,
+                    label: row.querySelector('.input-label').value.trim() || id,
+                    type: row.querySelector('.input-type').value,
+                    placeholder: row.querySelector('.input-placeholder').value || ''
+                });
+            });
+            
+            const showCount = document.getElementById('custom-show-count').value === 'true';
+            
+            if (editingPageId) {
+                const page = customPages.find(p => p.id === editingPageId);
+                if (page) {
+                    page.name = name;
+                    page.submodes = submodes;
+                    page.inputs = inputs;
+                    page.showCount = showCount;
+                    saveCustomPages();
+                    if (typeof toastr !== 'undefined') toastr.success('页面已更新');
+                }
+                clearForm();
+            } else {
+                const newPage = {
+                    id: 'page_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8),
+                    name: name,
+                    enabled: true,
+                    submodes: submodes,
+                    inputs: inputs,
+                    showCount: showCount
+                };
+                customPages.push(newPage);
+                saveCustomPages();
+                if (typeof toastr !== 'undefined') toastr.success('页面已创建');
+                clearForm();
+            }
+            
+            refreshCustomPagesUI();
+            rebuildTabsAndContents();
+            refreshTemplateEditor();
+        };
+    }
+}
+
+function getCustomPageTemplate(pageName, submodeId) {
+    return customTemplates[`custom_${pageName}_${submodeId}`] || '';
+}
+
+function saveCustomPageTemplate(pageName, submodeId, content) {
+    customTemplates[`custom_${pageName}_${submodeId}`] = content;
+    saveCustomTemplates();
+}
+
+function getDeletePageButtonHtml(pageId, pageName) {
+    return `<div class="delete-page-container" style="margin-top: 16px; padding: 12px; border-top: 1px solid var(--SmartThemeBorderColor); text-align: center;">
+        <button id="delete_page_${pageId}" class="delete-page-btn" style="background: #d32f2f; color: white; padding: 6px 16px;">删除此页面</button>
+    </div>`;
+}
+
+function renderCustomPageContent(page) {
+    if (!page.enabled) return '';
+    
+    let submodeHtml = '';
+    if (page.submodes && page.submodes.length > 0) {
+        submodeHtml = `<div class="field"><label>子模式</label><div class="extend-checkboxes" id="custom_submode_group_${page.id}">`;
+        page.submodes.forEach((submode, idx) => {
+            submodeHtml += `<label><input type="radio" name="custom_submode_${page.id}" value="${escapeHtml(submode.id)}" ${idx === 0 ? 'checked' : ''}> ${escapeHtml(submode.name)}</label>`;
+        });
+        submodeHtml += `</div></div>`;
+    }
+    
+    let inputsHtml = '';
+    for (const input of page.inputs) {
+        if (input.type === 'textarea') {
+            inputsHtml += `<div class="field"><label>${escapeHtml(input.label)}</label><textarea id="custom_input_${page.id}_${input.id}" rows="3" placeholder="${escapeHtml(input.placeholder || '')}"></textarea></div>`;
+        } else if (input.type === 'number') {
+            inputsHtml += `<div class="field"><label>${escapeHtml(input.label)}</label><input type="number" id="custom_input_${page.id}_${input.id}" placeholder="${escapeHtml(input.placeholder || '')}"></div>`;
+        } else if (input.type === 'range') {
+            inputsHtml += `<div class="field"><label>${escapeHtml(input.label)}</label><input type="range" id="custom_input_${page.id}_${input.id}" min="1" max="20" value="1"><span id="custom_input_${page.id}_${input.id}_val">1</span></div>`;
+        } else {
+            inputsHtml += `<div class="field"><label>${escapeHtml(input.label)}</label><input type="text" id="custom_input_${page.id}_${input.id}" placeholder="${escapeHtml(input.placeholder || '')}"></div>`;
+        }
+    }
+    
+    let countHtml = '';
+    if (page.showCount !== false) {
+        countHtml = `<div class="field"><label>生成数量</label><input type="number" id="custom_count_${page.id}" min="1" max="20" value="1"></div>`;
+    }
+    
+    return `
+        <div class="custom-page-content" data-page-id="${page.id}">
+            ${submodeHtml}
+            ${inputsHtml}
+            ${countHtml}
+            <button id="custom_page_gen_${page.id}" class="primary-btn">生成</button>
+            <div class="field"><label>生成结果</label><textarea id="custom_page_result_${page.id}" class="result-text" rows="12"></textarea></div>
+            <div class="button-group"><button id="custom_page_copy_${page.id}" class="copy-btn">复制</button><button id="custom_page_clear_${page.id}">清空</button></div>
+            ${getDeletePageButtonHtml(page.id, page.name)}
+        </div>
+    `;
+}
+
+function bindCustomPageEvents(pageId) {
+    const genBtn = document.getElementById(`custom_page_gen_${pageId}`);
+    const resultArea = document.getElementById(`custom_page_result_${pageId}`);
+    const copyBtn = document.getElementById(`custom_page_copy_${pageId}`);
+    const clearBtn = document.getElementById(`custom_page_clear_${pageId}`);
+    const deleteBtn = document.getElementById(`delete_page_${pageId}`);
+    
+    if (deleteBtn) {
+        deleteBtn.onclick = () => {
+            if (confirm('确定要删除此页面吗？删除后可在"自定义页面"管理中重新启用。')) {
+                hideTab(`custom_${pageId}`);
+                if (typeof toastr !== 'undefined') toastr.success('页面已从选项卡中移除');
+            }
+        };
+    }
+    
+    if (!genBtn) return;
+    
+    const page = customPages.find(p => p.id === pageId);
+    if (page) {
+        for (const input of page.inputs) {
+            if (input.type === 'range') {
+                const slider = document.getElementById(`custom_input_${pageId}_${input.id}`);
+                const valSpan = document.getElementById(`custom_input_${pageId}_${input.id}_val`);
+                if (slider && valSpan) slider.oninput = () => { valSpan.textContent = slider.value; };
+            }
+        }
+    }
+    
+    genBtn.onclick = async () => {
+        if (!apiConfig.apiKey || !apiConfig.apiUrl || !apiConfig.apiModel) {
+            if (typeof toastr !== 'undefined') toastr.error('请先配置 API');
+            return;
+        }
+        
+        const page = customPages.find(p => p.id === pageId);
+        if (!page) return;
+        
+        const selectedSubmode = document.querySelector(`input[name="custom_submode_${pageId}"]:checked`)?.value;
+        if (!selectedSubmode) {
+            if (typeof toastr !== 'undefined') toastr.warning('请选择一个子模式');
+            return;
+        }
+        
+        const template = getCustomPageTemplate(page.name, selectedSubmode);
+        if (!template || !template.trim()) {
+            if (typeof toastr !== 'undefined') toastr.warning(`请先在模板编辑页填写提示词`);
+            return;
+        }
+        
+        let systemPrompt = template;
+        const variables = {};
+        for (const input of page.inputs) {
+            const el = document.getElementById(`custom_input_${pageId}_${input.id}`);
+            if (el) variables[input.id] = el.value || '';
+        }
+        const countEl = document.getElementById(`custom_count_${pageId}`);
+        variables['count'] = countEl ? countEl.value : '1';
+        variables['submode'] = selectedSubmode;
+        
+        for (const [key, value] of Object.entries(variables)) {
+            systemPrompt = systemPrompt.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+        }
+        
+        if (genBtn) { genBtn.disabled = true; genBtn.textContent = '生成中...'; }
+        try {
+            const content = await callApi(
+                [{ role: 'user', content: '请根据用户要求生成内容' }],
+                systemPrompt,
+                { temperature: 0.85, max_tokens: 4000 }
+            );
+            if (resultArea) {
+                resultArea.value = content;
+                addToHistory(page.name, `子模式:${selectedSubmode}`, content);
+                if (copyBtn) copyBtn.disabled = false;
+            }
+            if (typeof toastr !== 'undefined') toastr.success('生成成功');
+        } catch(err) {
+            if (typeof toastr !== 'undefined') toastr.error(`失败: ${err.message}`);
+        } finally {
+            if (genBtn) { genBtn.disabled = false; genBtn.textContent = '生成'; }
+        }
+    };
+    
+    if (copyBtn) copyBtn.onclick = () => copyToClipboard(resultArea?.value || '');
+    if (clearBtn) clearBtn.onclick = () => { if(resultArea) resultArea.value = ''; if(copyBtn) copyBtn.disabled = true; };
+    if(resultArea) resultArea.addEventListener('input', () => { if(copyBtn) copyBtn.disabled = !resultArea.value; saveDraft(`custom_${pageId}`, resultArea.value); });
+    if(resultArea) resultArea.value = loadDraft(`custom_${pageId}`);
+}
+
+// ========== 内置页面删除按钮 ==========
+function addBuiltinPageDeleteButton(tabId, pageName) {
+    const container = document.getElementById(`tab-${tabId}`);
+    if (!container || container.querySelector('.builtin-delete-container')) return;
+    
+    const deleteHtml = `<div class="builtin-delete-container" style="margin-top: 16px; padding: 12px; border-top: 1px solid var(--SmartThemeBorderColor); text-align: center;">
+        <button id="delete_builtin_${tabId}" class="delete-page-btn" style="background: #d32f2f; color: white; padding: 6px 16px;">删除此页面</button>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', deleteHtml);
+    
+    const deleteBtn = document.getElementById(`delete_builtin_${tabId}`);
+    if (deleteBtn) {
+        deleteBtn.onclick = () => {
+            if (confirm(`确定要从选项卡中删除"${pageName}"吗？\n\n可以在"更多"菜单中重新添加。`)) {
+                hideTab(tabId);
+                if (typeof toastr !== 'undefined') toastr.success(`已删除"${pageName}"选项卡`);
+            }
+        };
+    }
+}
+
+// ========== 选项卡管理器 ==========
+function rebuildTabsAndContents() {
+    const activeTabs = getActiveTabs();
+    const hiddenTabs = Object.keys(builtInTabs).filter(id => !activeTabs.includes(id));
+    
+    const tabBar = document.querySelector('.tab-bar');
+    if (tabBar) {
+        tabBar.innerHTML = '';
+        
+        for (const tabId of activeTabs) {
+            if (builtInTabs[tabId]) {
+                const btn = document.createElement('button');
+                btn.className = 'tab-btn';
+                btn.textContent = builtInTabs[tabId];
+                btn.dataset.tab = tabId;
+                tabBar.appendChild(btn);
+            }
+        }
+        
+        const enabledCustomPages = customPages.filter(p => p.enabled);
+        for (const page of enabledCustomPages) {
+            const tabId = `custom_${page.id}`;
+            if (activeTabs.includes(tabId)) {
+                const btn = document.createElement('button');
+                btn.className = 'tab-btn custom-tab';
+                btn.textContent = page.name;
+                btn.dataset.tab = tabId;
+                btn.dataset.custom = 'true';
+                btn.dataset.pageId = page.id;
+                tabBar.appendChild(btn);
+            }
+        }
+        
+        const moreBtnContainer = document.createElement('div');
+        moreBtnContainer.className = 'tab-dropdown';
+        moreBtnContainer.style.position = 'relative';
+        moreBtnContainer.style.display = 'inline-block';
+        
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'tab-btn';
+        moreBtn.textContent = '▼ 更多';
+        moreBtnContainer.appendChild(moreBtn);
+        
+        const dropdown = document.createElement('div');
+        dropdown.className = 'dropdown-content';
+        dropdown.style.position = 'absolute';
+        dropdown.style.backgroundColor = 'var(--SmartThemeBlurTintColor)';
+        dropdown.style.backdropFilter = 'blur(10px)';
+        dropdown.style.minWidth = '120px';
+        dropdown.style.boxShadow = '0 8px 16px rgba(0,0,0,0.2)';
+        dropdown.style.zIndex = '1';
+        dropdown.style.display = 'none';
+        dropdown.style.borderRadius = '4px';
+        dropdown.style.overflow = 'hidden';
+        
+        for (const tabId of hiddenTabs) {
+            if (builtInTabs[tabId]) {
+                const item = document.createElement('a');
+                item.href = '#';
+                item.textContent = builtInTabs[tabId];
+                item.style.display = 'block';
+                item.style.padding = '8px 12px';
+                item.style.textDecoration = 'none';
+                item.style.color = 'var(--SmartThemeBodyColor)';
+                item.onclick = (e) => {
+                    e.preventDefault();
+                    saveActiveTabs([...getActiveTabs(), tabId]);
+                    rebuildTabsAndContents();
+                };
+                dropdown.appendChild(item);
+            }
+        }
+        
+        for (const page of enabledCustomPages) {
+            const tabId = `custom_${page.id}`;
+            if (!activeTabs.includes(tabId)) {
+                const item = document.createElement('a');
+                item.href = '#';
+                item.textContent = page.name;
+                item.style.display = 'block';
+                item.style.padding = '8px 12px';
+                item.style.textDecoration = 'none';
+                item.style.color = 'var(--SmartThemeBodyColor)';
+                item.onclick = (e) => {
+                    e.preventDefault();
+                    saveActiveTabs([...getActiveTabs(), tabId]);
+                    rebuildTabsAndContents();
+                };
+                dropdown.appendChild(item);
+            }
+        }
+        
+        const divider = document.createElement('hr');
+        divider.style.margin = '4px 0';
+        divider.style.borderColor = 'var(--SmartThemeBorderColor)';
+        dropdown.appendChild(divider);
+        
+        const restoreItem = document.createElement('a');
+        restoreItem.href = '#';
+        restoreItem.textContent = '恢复默认选项卡';
+        restoreItem.style.display = 'block';
+        restoreItem.style.padding = '8px 12px';
+        restoreItem.style.textDecoration = 'none';
+        restoreItem.style.color = '#d32f2f';
+        restoreItem.onclick = (e) => {
+            e.preventDefault();
+            restoreAllTabs();
+        };
+        dropdown.appendChild(restoreItem);
+        
+        moreBtnContainer.appendChild(dropdown);
+        moreBtn.onclick = (e) => { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; };
+        document.addEventListener('click', () => { dropdown.style.display = 'none'; });
+        tabBar.appendChild(moreBtnContainer);
+    }
+    
+    const panel = document.querySelector('.ai-panel');
+    if (!panel) return;
+    const existingContents = panel.querySelectorAll('.tab-content');
+    existingContents.forEach(c => c.remove());
+    
+    for (const tabId of activeTabs) {
+        if (builtInTabs[tabId]) {
+            const contentDiv = document.createElement('div');
+            contentDiv.id = `tab-${tabId}`;
+            contentDiv.className = 'tab-content';
+            if (tabId === 'api') contentDiv.innerHTML = renderApiConfigPanel();
+            else if (tabId === 'char') contentDiv.innerHTML = getCharTabContent();
+            else if (tabId === 'batch') contentDiv.innerHTML = getBatchTabContent();
+            else if (tabId === 'user') contentDiv.innerHTML = getUserTabContent();
+            else if (tabId === 'world') contentDiv.innerHTML = getWorldTabContent();
+            else if (tabId === 'world-extend') contentDiv.innerHTML = getWorldExtendTabContent();
+            else if (tabId === 'relation') contentDiv.innerHTML = getRelationTabContent();
+            else if (tabId === 'wardrobe') contentDiv.innerHTML = getWardrobeTabContent();
+            else if (tabId === 'story') contentDiv.innerHTML = getStoryTabContent();
+            else if (tabId === 'playmix') contentDiv.innerHTML = getPlaymixTabContent();
+            else if (tabId === 'novel') contentDiv.innerHTML = getNovelTabContent();
+            else if (tabId === 'theater') contentDiv.innerHTML = getTheaterTabContent();
+            else if (tabId === 'psychology') contentDiv.innerHTML = getPsychologyTabContent();
+            else if (tabId === 'stylegen') contentDiv.innerHTML = getStylegenTabContent();
+            else if (tabId === 'presetgen') contentDiv.innerHTML = getPresetgenTabContent();
+            else if (tabId === 'custom-mgr') contentDiv.innerHTML = renderCustomPagesManager();
+            else if (tabId === 'history') contentDiv.innerHTML = '<div id="history-list" class="list-container"></div><button id="history-clear">清空历史</button>';
+            else if (tabId === 'templates') contentDiv.innerHTML = '<div class="button-group"><button id="tpl-export">导出模板</button><button id="tpl-import">导入模板</button><input type="file" id="tpl-import-file" accept=".json" style="display:none"></div><div id="template-list" class="list-container"></div>';
+            else if (tabId === 'template-edit') contentDiv.innerHTML = renderTemplateEditor();
+            else if (tabId === 'size') contentDiv.innerHTML = '<div class="field"><label>宽度 <span id="width-val"></span> px</label><input type="range" id="width-slider" min="200" max="700" step="10"><div class="field"><label>高度 <span id="height-val"></span> px</label><input type="range" id="height-slider" min="400" max="800" step="10"></div><div class="field"><label>左边距 <span id="left-val"></span> px</label><input type="range" id="left-slider" min="0" max="500" step="10"></div><div class="field"><label>上边距 <span id="top-val"></span> px</label><input type="range" id="top-slider" min="0" max="500" step="10"></div><div class="field"><label>字体大小 <span id="font-val">13</span> px</label><input type="range" id="font-slider" min="10" max="18" step="1" value="13"></div>';
+            panel.appendChild(contentDiv);
+            
+            if (tabId !== 'api' && tabId !== 'custom-mgr') {
+                setTimeout(() => addBuiltinPageDeleteButton(tabId, builtInTabs[tabId]), 50);
+            }
+        }
+    }
+    
+    for (const page of customPages.filter(p => p.enabled)) {
+        const tabId = `custom_${page.id}`;
+        if (activeTabs.includes(tabId)) {
+            const contentDiv = document.createElement('div');
+            contentDiv.id = `tab-${tabId}`;
+            contentDiv.className = 'tab-content';
+            contentDiv.innerHTML = renderCustomPageContent(page);
+            panel.appendChild(contentDiv);
+            bindCustomPageEvents(page.id);
+        }
+    }
+    
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        if (btn.textContent === '▼ 更多') return;
+        btn.onclick = (e) => {
+            const id = btn.dataset.tab;
+            document.querySelectorAll('.tab-btn').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const targetContent = document.getElementById(`tab-${id}`);
+            if (targetContent) targetContent.classList.add('active');
+            
+            if (id === 'relation') refreshRelationList();
+            if (id === 'world-extend') {
+                document.querySelectorAll('.extend-type-checkbox').forEach(cb => cb.onchange = () => updateExtendTypes());
+                updateExtendTypes();
+            }
+            if (id === 'template-edit') { refreshTemplateEditor(); bindTemplateEditorEvents(); }
+            if (id === 'custom-mgr') { refreshCustomPagesUI(); bindCustomPageManagerEvents(); }
+            if (id === 'history') refreshHistoryList();
+            if (id === 'templates') refreshTemplateList();
+            if (id === 'size') bindSizeEvents();
+            
+            if (id !== 'api' && id !== 'custom-mgr' && builtInTabs[id]) {
+                addBuiltinPageDeleteButton(id, builtInTabs[id]);
+            }
+            
+            const result = document.getElementById(`${id}-result`);
+            if (result?.classList.contains('result-text')) {
+                const draft = loadDraft(id);
+                if (draft && !result.value) result.value = draft;
+            }
+        };
+    });
+    
+    bindApiConfigEvents();
+    bindAllGenerationEvents();
+    bindSizeEvents();
+    applyTheme();
+    
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (!activeTab) document.querySelector('.tab-btn[data-tab="api"]')?.click();
+}
+
+// ========== 绑定所有生成按钮事件 ==========
+function bindAllGenerationEvents() {
+    const charGen = document.getElementById('char-gen');
+    const charInput = document.getElementById('char-input');
+    const charResult = document.getElementById('char-result');
+    const charCopy = document.getElementById('char-copy');
+    const charClear = document.getElementById('char-clear');
+    const charSaveTpl = document.getElementById('char-save-tpl');
+    const charTemplateName = document.getElementById('char-template-name');
+    
+    if (charGen && charInput && charResult) charGen.onclick = () => generateCharacter(charInput.value, 'character', charGen, charResult);
+    if (charCopy && charResult) charCopy.onclick = () => copyToClipboard(charResult.value);
+    if (charClear && charResult) charClear.onclick = () => { charResult.value = ''; };
+    if (charSaveTpl && charTemplateName && charResult) {
+        charSaveTpl.onclick = () => {
+            const name = charTemplateName.value.trim();
+            if (name && charResult.value) {
+                config.savedTemplates.push({ name, content: charResult.value });
+                saveConfig();
+                refreshTemplateList();
+                if (typeof toastr !== 'undefined') toastr.success('模板已保存');
+            } else if (typeof toastr !== 'undefined') toastr.warning('请输入模板名称且结果不为空');
+        };
+    }
+    
+    const userGen = document.getElementById('user-gen');
+    const userInput = document.getElementById('user-input');
+    const userResult = document.getElementById('user-result');
+    const userCopy = document.getElementById('user-copy');
+    const userClear = document.getElementById('user-clear');
+    const userSaveTpl = document.getElementById('user-save-tpl');
+    const userTemplateName = document.getElementById('user-template-name');
+    
+    if (userGen && userInput && userResult) userGen.onclick = () => generateCharacter(userInput.value, 'user', userGen, userResult);
+    if (userCopy && userResult) userCopy.onclick = () => copyToClipboard(userResult.value);
+    if (userClear && userResult) userClear.onclick = () => { userResult.value = ''; };
+    if (userSaveTpl && userTemplateName && userResult) {
+        userSaveTpl.onclick = () => {
+            const name = userTemplateName.value.trim();
+            if (name && userResult.value) {
+                config.savedTemplates.push({ name, content: userResult.value });
+                saveConfig();
+                refreshTemplateList();
+                if (typeof toastr !== 'undefined') toastr.success('模板已保存');
+            } else if (typeof toastr !== 'undefined') toastr.warning('请输入模板名称且结果不为空');
+        };
+    }
+    
+    const batchGen = document.getElementById('batch-gen');
+    const batchInput = document.getElementById('batch-input');
+    const batchResult = document.getElementById('batch-result');
+    const batchCopy = document.getElementById('batch-copy');
+    const batchClear = document.getElementById('batch-clear');
+    
+    if (batchGen && batchInput && batchResult) batchGen.onclick = () => batchGenerateCharacters(batchInput.value, batchGen, batchResult);
+    if (batchCopy && batchResult) batchCopy.onclick = () => copyToClipboard(batchResult.value);
+    if (batchClear && batchResult) batchClear.onclick = () => { batchResult.value = ''; };
+    
+    const worldGen = document.getElementById('world-gen');
+    const worldInput = document.getElementById('world-input');
+    const worldResult = document.getElementById('world-result');
+    const worldCopy = document.getElementById('world-copy');
+    const worldClear = document.getElementById('world-clear');
+    const worldSaveTpl = document.getElementById('world-save-tpl');
+    const worldTemplateName = document.getElementById('world-template-name');
+    
+    if (worldGen && worldInput && worldResult) worldGen.onclick = () => generateWorldbook(worldInput.value, worldGen, worldResult);
+    if (worldCopy && worldResult) worldCopy.onclick = () => copyToClipboard(worldResult.value);
+    if (worldClear && worldResult) worldClear.onclick = () => { worldResult.value = ''; };
+    if (worldSaveTpl && worldTemplateName && worldResult) {
+        worldSaveTpl.onclick = () => {
+            const name = worldTemplateName.value.trim();
+            if (name && worldResult.value) {
+                config.savedTemplates.push({ name, content: worldResult.value });
+                saveConfig();
+                refreshTemplateList();
+                if (typeof toastr !== 'undefined') toastr.success('模板已保存');
+            } else if (typeof toastr !== 'undefined') toastr.warning('请输入模板名称且结果不为空');
+        };
+    }
+    
+    const worldExtendGen = document.getElementById('world-extend-generate');
+    if (worldExtendGen) worldExtendGen.onclick = () => generateWorldExtend(worldExtendGen);
+    const worldExtendCopy = document.getElementById('world-extend-copy');
+    const worldExtendResult = document.getElementById('world-extend-result');
+    const worldExtendClear = document.getElementById('world-extend-clear');
+    if (worldExtendCopy && worldExtendResult) worldExtendCopy.onclick = () => copyToClipboard(worldExtendResult.value);
+    if (worldExtendClear && worldExtendResult) worldExtendClear.onclick = () => { worldExtendResult.value = ''; };
+    
+    const relationAdd = document.getElementById('relation-add');
+    const relationName = document.getElementById('relation-name');
+    const relationDesc = document.getElementById('relation-desc');
+    if (relationAdd && relationName) relationAdd.onclick = () => addRelationChar(relationName.value, relationDesc?.value || '');
+    const relationGen = document.getElementById('relation-gen');
+    const relationResult = document.getElementById('relation-result');
+    if (relationGen && relationResult) relationGen.onclick = () => generateRelationText(relationGen, relationResult);
+    const relationCopy = document.getElementById('relation-copy');
+    const relationClear = document.getElementById('relation-clear');
+    if (relationCopy && relationResult) relationCopy.onclick = () => copyToClipboard(relationResult.value);
+    if (relationClear && relationResult) relationClear.onclick = () => { relationResult.value = ''; };
+    const relationSaveTplBtn = document.getElementById('relation-save-tpl');
+    const relationTemplateName = document.getElementById('relation-template-name');
+    if (relationSaveTplBtn && relationTemplateName && relationResult) {
+        relationSaveTplBtn.onclick = () => {
+            const name = relationTemplateName.value.trim();
+            if (name && relationResult.value) {
+                config.savedTemplates.push({ name, content: relationResult.value });
+                saveConfig();
+                refreshTemplateList();
+                if (typeof toastr !== 'undefined') toastr.success('模板已保存');
+            } else if (typeof toastr !== 'undefined') toastr.warning('请输入模板名称且结果不为空');
+        };
+    }
+    
+    // 魔法衣橱模式选择 - 统一用了 extend-checkboxes 样式，直接读取选中值
+    let wardrobeMode = 'keyword';
+    const wardrobeModeRadios = document.querySelectorAll('input[name="wardrobe-mode"]');
+    if (wardrobeModeRadios.length) {
+        wardrobeModeRadios.forEach(r => {
+            r.onchange = () => { if (r.checked) wardrobeMode = r.value; };
+        });
+    }
+    const wardrobeGen = document.getElementById('wardrobe-gen');
+    const wardrobeInput = document.getElementById('wardrobe-input');
+    const wardrobeResult = document.getElementById('wardrobe-result');
+    if (wardrobeGen && wardrobeInput && wardrobeResult) {
+        wardrobeGen.onclick = () => {
+            const qqSubmode = document.querySelector('input[name="qq-submode"]:checked')?.value || 'freeform';
+            generateWardrobe(wardrobeInput.value, wardrobeMode, qqSubmode, wardrobeGen, wardrobeResult);
+        };
+    }
+    const wardrobeCopy = document.getElementById('wardrobe-copy');
+    const wardrobeClear = document.getElementById('wardrobe-clear');
+    if (wardrobeCopy && wardrobeResult) wardrobeCopy.onclick = () => copyToClipboard(wardrobeResult.value);
+    if (wardrobeClear && wardrobeResult) wardrobeClear.onclick = () => { wardrobeResult.value = ''; };
+    const wardrobeSaveTpl = document.getElementById('wardrobe-save-tpl');
+    const wardrobeTemplateName = document.getElementById('wardrobe-template-name');
+    if (wardrobeSaveTpl && wardrobeTemplateName && wardrobeResult) {
+        wardrobeSaveTpl.onclick = () => {
+            const name = wardrobeTemplateName.value.trim();
+            if (name && wardrobeResult.value) {
+                config.savedTemplates.push({ name, content: wardrobeResult.value });
+                saveConfig();
+                refreshTemplateList();
+                if (typeof toastr !== 'undefined') toastr.success('模板已保存');
+            } else if (typeof toastr !== 'undefined') toastr.warning('请输入模板名称且结果不为空');
+        };
+    }
+    
+    const storyGen = document.getElementById('story-gen');
+    const storyResult = document.getElementById('story-result');
+    if (storyGen && storyResult) storyGen.onclick = () => generateStory(storyGen, storyResult);
+    const storyCopy = document.getElementById('story-copy');
+    const storyClear = document.getElementById('story-clear');
+    if (storyCopy && storyResult) storyCopy.onclick = () => copyToClipboard(storyResult.value);
+    if (storyClear && storyResult) storyClear.onclick = () => { storyResult.value = ''; };
+    
+    const playmixGen = document.getElementById('playmix-gen');
+    const playmixResult = document.getElementById('playmix-result');
+    if (playmixGen && playmixResult) playmixGen.onclick = () => generatePlayMix(playmixGen, playmixResult);
+    const playmixCopy = document.getElementById('playmix-copy');
+    const playmixClear = document.getElementById('playmix-clear');
+    if (playmixCopy && playmixResult) playmixCopy.onclick = () => copyToClipboard(playmixResult.value);
+    if (playmixClear && playmixResult) playmixClear.onclick = () => { playmixResult.value = ''; };
+    
+    const novelGen = document.getElementById('novel-generate');
+    if (novelGen) novelGen.onclick = () => generateNovel(false);
+    const novelContinue = document.getElementById('novel-continue');
+    if (novelContinue) novelContinue.onclick = () => generateNovel(true);
+    const novelClear = document.getElementById('novel-clear');
+    if (novelClear) novelClear.onclick = () => clearNovel();
+    const novelCopy = document.getElementById('novel-copy');
+    if (novelCopy) novelCopy.onclick = () => copyNovel();
+    const novelWordCount = document.getElementById('novel-word-count');
+    const wordCountVal = document.getElementById('word-count-val');
+    if (novelWordCount && wordCountVal) novelWordCount.oninput = () => { wordCountVal.textContent = novelWordCount.value; };
+    
+    const theaterGen = document.getElementById('theater-gen');
+    const theaterResult = document.getElementById('theater-result');
+    if (theaterGen && theaterResult) theaterGen.onclick = () => generateTheater(theaterGen, theaterResult);
+    const theaterCopy = document.getElementById('theater-copy');
+    const theaterClear = document.getElementById('theater-clear');
+    if (theaterCopy && theaterResult) theaterCopy.onclick = () => copyToClipboard(theaterResult.value);
+    if (theaterClear && theaterResult) theaterClear.onclick = () => { theaterResult.value = ''; };
+    
+    const psychologyAnalyze = document.getElementById('psychology-analyze');
+    const psychologyResult = document.getElementById('psychology-result');
+    if (psychologyAnalyze && psychologyResult) psychologyAnalyze.onclick = () => generatePsychologyAnalysis(psychologyAnalyze, psychologyResult);
+    const psychologyCopy = document.getElementById('psychology-copy');
+    const psychologyClear = document.getElementById('psychology-clear');
+    if (psychologyCopy && psychologyResult) psychologyCopy.onclick = () => copyToClipboard(psychologyResult.value);
+    if (psychologyClear && psychologyResult) psychologyClear.onclick = () => { psychologyResult.value = ''; };
+    
+    const mbtiTest = document.getElementById('mbti-test');
+    const mbtiResult = document.getElementById('mbti-result');
+    if (mbtiTest && mbtiResult) mbtiTest.onclick = () => generateMBTITest(mbtiTest, mbtiResult);
+    const mbtiCopy = document.getElementById('mbti-copy');
+    const mbtiClear = document.getElementById('mbti-clear');
+    if (mbtiCopy && mbtiResult) mbtiCopy.onclick = () => copyToClipboard(mbtiResult.value);
+    if (mbtiClear && mbtiResult) mbtiClear.onclick = () => { mbtiResult.value = ''; };
+    
+    const styleGen = document.getElementById('style-gen');
+    const styleResult = document.getElementById('style-result');
+    if (styleGen && styleResult) styleGen.onclick = () => generateStyle(styleGen, styleResult);
+    const styleCopy = document.getElementById('style-copy');
+    const styleClear = document.getElementById('style-clear');
+    if (styleCopy && styleResult) styleCopy.onclick = () => copyToClipboard(styleResult.value);
+    if (styleClear && styleResult) styleClear.onclick = () => { styleResult.value = ''; };
+    
+    const presetGen = document.getElementById('preset-gen');
+    const presetResult = document.getElementById('preset-result');
+    if (presetGen && presetResult) presetGen.onclick = () => generatePreset(presetGen, presetResult);
+    const presetCopy = document.getElementById('preset-copy');
+    const presetClear = document.getElementById('preset-clear');
+    if (presetCopy && presetResult) presetCopy.onclick = () => copyToClipboard(presetResult.value);
+    if (presetClear && presetResult) presetClear.onclick = () => { presetResult.value = ''; };
+    
+    const historyClear = document.getElementById('history-clear');
+    if (historyClear) {
+        historyClear.onclick = () => {
+            config.generationHistory = [];
+            saveConfig();
+            refreshHistoryList();
+            if (typeof toastr !== 'undefined') toastr.success('已清空历史');
+        };
+    }
+    
+    const tplExport = document.getElementById('tpl-export');
+    if (tplExport) tplExport.onclick = () => exportTemplates();
+    const tplImport = document.getElementById('tpl-import');
+    const tplImportFile = document.getElementById('tpl-import-file');
+    if (tplImport && tplImportFile) {
+        tplImport.onclick = () => tplImportFile.click();
+        tplImportFile.onchange = (e) => { if (e.target.files.length) importTemplates(e.target.files[0]); tplImportFile.value = ''; };
+    }
+    
+    const quickThemeBtn = document.getElementById('quick-theme-btn');
+    if (quickThemeBtn) quickThemeBtn.onclick = () => toggleTheme();
+}
+
+function toggleTheme() {
+    const panel = document.getElementById('ai-char-generator-panel');
+    if (panel) {
+        const isDark = panel.classList.contains('dark-mode');
+        if (isDark) {
+            panel.classList.remove('dark-mode');
+            panel.classList.add('light-mode');
+        } else {
+            panel.classList.remove('light-mode');
+            panel.classList.add('dark-mode');
+        }
+    }
+    applyTheme();
+}
+
+function applyTheme() {
+    const panel = document.getElementById('ai-char-generator-panel');
+    if (!panel) return;
+    
+    const isDarkTheme = document.body.classList.contains('dark') || 
+        getComputedStyle(document.body).getPropertyValue('--SmartThemeBodyColor').includes('255,255,255') ||
+        document.body.style.backgroundColor?.includes('#1e');
+    
+    if (isDarkTheme) {
+        panel.classList.add('dark-mode');
+        panel.classList.remove('light-mode');
+    } else {
+        panel.classList.add('light-mode');
+        panel.classList.remove('dark-mode');
+    }
+    
+    const styleEl = document.getElementById('apg-theme-style');
+    if (styleEl) styleEl.remove();
+    
+    const themeStyle = document.createElement('style');
+    themeStyle.id = 'apg-theme-style';
+    themeStyle.textContent = `
+        .ai-panel {
+            background: var(--SmartThemeBlurTintColor, #1e1e1e);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+            border: 1px solid var(--SmartThemeBorderColor, #333);
+            backdrop-filter: blur(10px);
+        }
+        .ai-panel .panel-header {
+            background: var(--SmartThemeBlurTintColor, #2d2d2d);
+            border-bottom-color: var(--SmartThemeBorderColor, #333);
+        }
+        .ai-panel .tab-bar {
+            background: var(--SmartThemeBlurTintColor, #252525);
+            border-bottom-color: var(--SmartThemeBorderColor, #333);
+        }
+        .ai-panel .tab-btn {
+            color: var(--SmartThemeBodyColor, #aaa);
+        }
+        .ai-panel .tab-btn.active {
+            background: var(--SmartThemeBlurTintColor, #1e1e1e);
+            border-color: var(--SmartThemeBorderColor, #444);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+        }
+        .ai-panel .field input, .ai-panel .field textarea, .ai-panel .field select {
+            background: var(--SmartThemeInputBackground, #2d2d2d);
+            border-color: var(--SmartThemeBorderColor, #444);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+        }
+        .ai-panel .result-text {
+            background: var(--SmartThemeInputBackground, #252525);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+        }
+        .ai-panel .primary-btn {
+            background: var(--SmartThemeQuoteColor, #4A6FA5);
+            color: white;
+        }
+        .ai-panel .copy-btn, .ai-panel .save-tpl-btn {
+            background: var(--SmartThemeQuoteColor, #4A6FA5);
+            color: white;
+        }
+        .ai-panel .template-card, .ai-panel .custom-page-form, .ai-panel .custom-page-list {
+            background: var(--SmartThemeBlurTintColor, #2a2a2a);
+            border-color: var(--SmartThemeBorderColor, #444);
+        }
+        .ai-panel .char-item, .ai-panel .history-item, .ai-panel .template-item {
+            border-bottom-color: var(--SmartThemeBorderColor, #333);
+        }
+        .ai-panel .char-item:hover, .ai-panel .history-item:hover {
+            background: var(--SmartThemeInputBackground, #2a2a2a);
+        }
+        .ai-panel .chapter-card {
+            border-color: var(--SmartThemeBorderColor, #444);
+        }
+        .ai-panel .chapter-title {
+            background: var(--SmartThemeBlurTintColor, #2d2d2d);
+            border-bottom-color: var(--SmartThemeBorderColor, #444);
+        }
+        .ai-panel .chapter-content-textarea {
+            background: var(--SmartThemeInputBackground, #252525);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+        }
+        .ai-panel .delete-page-btn {
+            background: #d32f2f;
+            color: white;
+        }
+        .ai-panel .menu_button {
+            background: var(--SmartThemeBlurTintColor, #3a3a3a);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+            border: 1px solid var(--SmartThemeBorderColor, #555);
+        }
+        .ai-panel .size-control-btn, .ai-panel .quick-theme-btn {
+            background: var(--SmartThemeBlurTintColor, #3a3a3a);
+            color: var(--SmartThemeBodyColor, #e0e0e0);
+            border: 1px solid var(--SmartThemeBorderColor, #555);
+        }
+    `;
+    document.head.appendChild(themeStyle);
+}
+
+function bindSizeEvents() {
+    const panel = document.getElementById('ai-char-generator-panel');
+    if (!panel) return;
+    
+    const widthSlider = document.getElementById('width-slider');
+    const heightSlider = document.getElementById('height-slider');
+    const leftSlider = document.getElementById('left-slider');
+    const topSlider = document.getElementById('top-slider');
+    const fontSlider = document.getElementById('font-slider');
+    const widthVal = document.getElementById('width-val');
+    const heightVal = document.getElementById('height-val');
+    const leftVal = document.getElementById('left-val');
+    const topVal = document.getElementById('top-val');
+    const fontVal = document.getElementById('font-val');
+    
+    if (widthSlider) {
+        widthSlider.value = config.panelWidth;
+        if (widthVal) widthVal.textContent = config.panelWidth;
+        widthSlider.oninput = () => {
+            const v = parseInt(widthSlider.value);
+            if (widthVal) widthVal.textContent = v;
+            config.panelWidth = v;
+            saveConfig();
+            panel.style.width = v + 'px';
+        };
+    }
+    
+    if (heightSlider) {
+        heightSlider.value = config.panelHeight;
+        if (heightVal) heightVal.textContent = config.panelHeight;
+        heightSlider.oninput = () => {
+            const v = parseInt(heightSlider.value);
+            if (heightVal) heightVal.textContent = v;
+            config.panelHeight = v;
+            saveConfig();
+            panel.style.height = v + 'px';
+        };
+    }
+    
+    if (leftSlider) {
+        leftSlider.value = config.panelLeft;
+        leftSlider.max = window.innerWidth - 100;
+        if (leftVal) leftVal.textContent = config.panelLeft;
+        leftSlider.oninput = () => {
+            const v = parseInt(leftSlider.value);
+            if (leftVal) leftVal.textContent = v;
+            config.panelLeft = v;
+            saveConfig();
+            panel.style.left = v + 'px';
+        };
+    }
+    
+    if (topSlider) {
+        topSlider.value = config.panelTop;
+        if (topVal) topVal.textContent = config.panelTop;
+        topSlider.oninput = () => {
+            const v = parseInt(topSlider.value);
+            if (topVal) topVal.textContent = v;
+            config.panelTop = v;
+            saveConfig();
+            panel.style.top = v + 'px';
+        };
+    }
+    
+    if (fontSlider) {
+        fontSlider.value = 13;
+        if (fontVal) fontVal.textContent = 13;
+        fontSlider.oninput = () => {
+            const v = parseInt(fontSlider.value);
+            if (fontVal) fontVal.textContent = v;
+            panel.style.fontSize = v + 'px';
+        };
+    }
+}
+
+function bindApiConfigEvents() {
+    const urlInput = document.getElementById('apg-api-url');
+    const keyInput = document.getElementById('apg-api-key');
+    const modelSelect = document.getElementById('apg-api-model');
+    
+    if (urlInput) urlInput.addEventListener('change', () => { apiConfig.apiUrl = urlInput.value; saveApiConfig(); });
+    if (keyInput) keyInput.addEventListener('change', () => { apiConfig.apiKey = keyInput.value; saveApiConfig(); });
+    if (modelSelect) modelSelect.addEventListener('change', () => { apiConfig.apiModel = modelSelect.value; saveApiConfig(); });
+    
+    const testBtn = document.getElementById('apg-test-connection');
+    if (testBtn) testBtn.onclick = () => testApiConnection();
+    const fetchBtn = document.getElementById('apg-fetch-models');
+    if (fetchBtn) fetchBtn.onclick = () => fetchModelList();
+    const useLocalBtn = document.getElementById('apg-use-local-api');
+    if (useLocalBtn) useLocalBtn.onclick = () => useLocalApiConfig();
+}
+
+function getCharTabContent() {
+    return `<div class="field"><label>简单设定</label><textarea id="char-input" rows="3" placeholder="例如：前锋，是所有屠孝子心里最柔软的地方"></textarea></div>
+            <button id="char-gen" class="primary-btn">生成角色卡</button>
+            <div class="field"><label>生成结果</label><textarea id="char-result" class="result-text" rows="10"></textarea></div>
+            <div class="button-group"><button id="char-copy" class="copy-btn">复制</button><button id="char-clear">清空</button></div>
+            <div class="field"><label>保存模板</label><div class="flex-row"><input type="text" id="char-template-name" placeholder="模板名称"><button id="char-save-tpl">保存</button></div></div>`;
+}
+
+function getBatchTabContent() {
+    return `<div class="field"><label>批量设定（每行一个角色）</label><textarea id="batch-input" rows="5" placeholder="例如：&#10;前锋，屠孝子心中最柔软的地方&#10;医生，温柔冷静的急救专家"></textarea></div>
+            <button id="batch-gen" class="primary-btn">批量生成</button>
+            <div class="field"><label>生成结果</label><textarea id="batch-result" class="result-text" rows="10"></textarea></div>
+            <div class="button-group"><button id="batch-copy" class="copy-btn">复制</button><button id="batch-clear">清空</button></div>`;
+}
+
+function getUserTabContent() {
+    return `<div class="field"><label>简单设定</label><textarea id="user-input" rows="3" placeholder="例如：菲利普，锋儿最爱的老公"></textarea></div>
+            <button id="user-gen" class="primary-btn">生成用户人设</button>
+            <div class="field"><label>生成结果</label><textarea id="user-result" class="result-text" rows="10"></textarea></div>
+            <div class="button-group"><button id="user-copy" class="copy-btn">复制</button><button id="user-clear">清空</button></div>
+            <div class="field"><label>保存模板</label><div class="flex-row"><input type="text" id="user-template-name" placeholder="模板名称"><button id="user-save-tpl">保存</button></div></div>`;
+}
+
+function getWorldTabContent() {
+    return `<div class="field"><label>设定要求</label><textarea id="world-input" rows="4" placeholder="例如：赛博朋克都市，企业控制，义体改造..."></textarea></div>
+            <button id="world-gen" class="primary-btn">生成世界书</button>
+            <div class="field"><label>生成结果</label><textarea id="world-result" class="result-text" rows="8"></textarea></div>
+            <div class="button-group"><button id="world-copy" class="copy-btn">复制</button><button id="world-clear">清空</button></div>
+            <div class="field"><label>保存模板</label><div class="flex-row"><input type="text" id="world-template-name" placeholder="模板名称"><button id="world-save-tpl">保存</button></div></div>`;
+}
+
+function getWorldExtendTabContent() {
+    return `<div class="field"><label>要扩展的内容</label><textarea id="world-extend-source" rows="6" placeholder="请输入你要扩展的世界观设定或角色设定..."></textarea></div>
+            <div class="field"><label>扩展类型（可多选）</label>
+            <div class="extend-checkboxes">
+            <label><input type="checkbox" class="extend-type-checkbox" value="location"> 地点</label>
+            <label><input type="checkbox" class="extend-type-checkbox" value="faction"> 势力</label>
+            <label><input type="checkbox" class="extend-type-checkbox" value="event"> 事件</label>
+            <label><input type="checkbox" class="extend-type-checkbox" value="culture"> 文化</label>
+            <label><input type="checkbox" class="extend-type-checkbox" value="technology"> 科技</label>
+            <label><input type="checkbox" class="extend-type-checkbox" value="character"> 重要人物</label>
+            </div></div>
+            <button id="world-extend-generate" class="primary-btn" disabled>生成扩展</button>
+            <div class="field"><label>扩展结果</label><textarea id="world-extend-result" class="result-text" rows="10"></textarea></div>
+            <div class="button-group"><button id="world-extend-copy" class="copy-btn">复制</button><button id="world-extend-clear">清空</button></div>`;
+}
+
+function getRelationTabContent() {
+    return `<div class="field"><label>角色列表</label><div id="relation-list" class="list-container"></div></div>
+            <div class="flex-row"><input type="text" id="relation-name" placeholder="角色名称"><button id="relation-add">添加</button></div>
+            <textarea id="relation-desc" rows="2" placeholder="角色描述（可选）"></textarea>
+            <button id="relation-gen" class="primary-btn">生成关系描述</button>
+            <div class="field"><label>关系描述</label><textarea id="relation-result" class="result-text" rows="10"></textarea></div>
+            <div class="button-group"><button id="relation-copy" class="copy-btn">复制</button><button id="relation-clear">清空</button></div>
+            <div class="field"><label>保存模板</label><div class="flex-row"><input type="text" id="relation-template-name" placeholder="模板名称"><button id="relation-save-tpl">保存</button></div></div>`;
+}
+
+function getWardrobeTabContent() {
+    return `<div class="field"><label>模式选择</label>
+            <div class="extend-checkboxes">
+            <label><input type="radio" name="wardrobe-mode" value="keyword" checked> 关键词生成</label>
+            <label><input type="radio" name="wardrobe-mode" value="character"> 人设推断</label>
+            <label><input type="radio" name="wardrobe-mode" value="scene"> 剧情分析</label>
+            <label><input type="radio" name="wardrobe-mode" value="qq"> QQ服装</label>
+            </div></div>
+            <div id="qq-mode-options" style="display:none;" class="field">
+            <label>QQ服装子模式</label>
+            <div class="extend-checkboxes">
+            <label><input type="radio" name="qq-submode" value="freeform" checked> 自由描述</label>
+            </div></div>
+            <div class="field"><label>输入内容</label><textarea id="wardrobe-input" rows="4" placeholder="根据模式输入关键词/人设/剧情片段，QQ服装模式下可留空则AI自由发挥"></textarea></div>
+            <button id="wardrobe-gen" class="primary-btn">生成衣橱</button>
+            <div class="field"><label>生成结果</label><textarea id="wardrobe-result" class="result-text" rows="12"></textarea></div>
+            <div class="button-group"><button id="wardrobe-copy" class="copy-btn">复制</button><button id="wardrobe-clear">清空</button></div>
+            <div class="field"><label>保存模板</label><div class="flex-row"><input type="text" id="wardrobe-template-name" placeholder="模板名称"><button id="wardrobe-save-tpl">保存</button></div></div>`;
+}
+
+function getStoryTabContent() {
+    return `<div class="field"><label>你想看什么？（留空则随机生成）</label>
+            <textarea id="story-user-wish" rows="3" placeholder="例如：古代宫廷、师徒禁忌、追妻火葬场"></textarea></div>
+            <div class="field"><label>生成数量</label><input type="number" id="story-count" min="1" max="20" value="3"></div>
+            <button id="story-gen" class="primary-btn">批量生成故事</button>
+            <div class="field"><label>生成结果</label><textarea id="story-result" class="result-text" rows="12"></textarea></div>
+            <div class="button-group"><button id="story-copy" class="copy-btn">复制</button><button id="story-clear">清空</button></div>`;
+}
+
+function getPlaymixTabContent() {
+    return `<div class="field"><label>你想看什么？（留空则随机生成）</label>
+            <textarea id="playmix-user-wish" rows="3" placeholder="例如：古风、病娇、甜宠、强制爱"></textarea></div>
+            <div class="field"><label>生成组数</label><input type="number" id="playmix-group-count" min="1" max="20" value="1"></div>
+            <button id="playmix-gen" class="primary-btn">生成人设+玩法</button>
+            <div class="field"><label>生成结果</label><textarea id="playmix-result" class="result-text" rows="16"></textarea></div>
+            <div class="button-group"><button id="playmix-copy" class="copy-btn">复制</button><button id="playmix-clear">清空</button></div>`;
+}
+
+function getNovelTabContent() {
+    return `<div class="field"><label>你想看什么？（留空则随机生成）</label>
+            <textarea id="novel-user-input" rows="3" placeholder="例如：星际世界观，军官男主，医生女主，相爱相杀"></textarea></div>
+            <div class="field"><label>风格标签（可自定义，逗号分隔）</label>
+            <input type="text" id="novel-style-tags" placeholder="例如：甜宠,虐心,悬疑,轻松,热血,古风,现代" value="甜宠,虐心,悬疑,轻松,热血,古风,现代"></div>
+            <div class="field"><label>章节字数：<span id="word-count-val">500</span> 字</label>
+            <input type="range" id="novel-word-count" min="300" max="1000" step="50" value="500"></div>
+            <div class="field"><label>生成章数</label>
+            <input type="number" id="novel-chapter-count" min="1" max="20" value="5"></div>
+            <div class="button-group">
+            <button id="novel-generate" class="primary-btn" style="flex:1;">生成新小说</button>
+            <button id="novel-continue" class="primary-btn" style="flex:1;">续写</button>
+            <button id="novel-clear" class="primary-btn" style="flex:1;">清空</button>
+            </div>
+            <div class="field"><label>书名</label>
+            <div id="novel-title" class="novel-title-display"></div></div>
+            <div class="field"><label>文案</label>
+            <textarea id="novel-blurb" class="result-text" rows="4" readonly></textarea></div>
+            <div class="field"><label>章节内容</label>
+            <div id="novel-chapters" class="novel-chapters"></div></div>
+            <div class="button-group"><button id="novel-copy" class="copy-btn">复制全部</button></div>`;
+}
+
+function getTheaterTabContent() {
+    return `<div class="field"><label>关键词（可选，留空则随机生成，多个关键词用逗号分隔）</label>
+            <textarea id="theater-keywords" rows="3" placeholder="例如：穿越,失忆,替身,追妻,误会,破镜重圆"></textarea></div>
+            <div class="field"><label>生成数量</label>
+            <input type="number" id="theater-count" min="1" max="20" value="3"></div>
+            <button id="theater-gen" class="primary-btn">生成小剧场</button>
+            <div class="field"><label>生成结果</label>
+            <textarea id="theater-result" class="result-text" rows="16"></textarea></div>
+            <div class="button-group"><button id="theater-copy" class="copy-btn">复制</button><button id="theater-clear">清空</button></div>`;
+}
+
+function getPsychologyTabContent() {
+    return `<div style="margin-bottom: 20px;">
+            <h4>人格/心理分析</h4>
+            <div class="field"><label>提供人设或剧情</label>
+            <textarea id="psychology-input" rows="4" placeholder="例如：一个从小被父母忽视的女孩，长大后总是讨好他人，不敢拒绝..."></textarea></div>
+            <button id="psychology-analyze" class="primary-btn">生成分析报告</button>
+            <div class="field"><label>分析结果</label>
+            <textarea id="psychology-result" class="result-text" rows="28" readonly></textarea></div>
+            <div class="button-group"><button id="psychology-copy" class="copy-btn">复制</button><button id="psychology-clear">清空</button></div>
+            </div>
+            <hr class="theme-hr">
+            <div>
+            <h4>MBTI人格分析</h4>
+            <div class="field"><label>提供人设</label>
+            <textarea id="mbti-character-input" rows="3" placeholder="例如：一个冷面刑警，独来独往，逻辑缜密，不擅表达情感..."></textarea></div>
+            <button id="mbti-test" class="primary-btn">分析MBTI</button>
+            <div class="field"><label>分析结果</label>
+            <textarea id="mbti-result" class="result-text" rows="16" readonly></textarea></div>
+            <div class="button-group"><button id="mbti-copy" class="copy-btn">复制</button><button id="mbti-clear">清空</button></div>
+            </div>`;
+}
+
+function getStylegenTabContent() {
+    return `<div class="field"><label>模式选择</label>
+            <div class="extend-checkboxes">
+            <label><input type="radio" name="style-mode" value="analyze" checked> 从文字分析</label>
+            <label><input type="radio" name="style-mode" value="keyword"> 从关键词/作家名生成</label>
+            </div></div>
+            <div class="field"><label>输入内容</label>
+            <textarea id="style-input" rows="5" placeholder="模式A：粘贴一段文字&#10;模式B：输入关键词（如：潮湿缱绻 白水烹鲜）或作家名（如：余华 村上春树）"></textarea></div>
+            <div class="field"><label>生成数量</label>
+            <input type="number" id="style-count" min="1" max="20" value="1"></div>
+            <button id="style-gen" class="primary-btn">生成文风</button>
+            <div class="field"><label>生成结果</label>
+            <textarea id="style-result" class="result-text" rows="28"></textarea></div>
+            <div class="button-group"><button id="style-copy" class="copy-btn">复制</button><button id="style-clear">清空</button></div>`;
+}
+
+function getPresetgenTabContent() {
+    return `<div class="field"><label>关键词</label>
+            <textarea id="preset-input" rows="5" placeholder="例如：兽化加强、凝视char、多人互动"></textarea></div>
+            <div class="field"><label>生成数量</label>
+            <input type="number" id="preset-count" min="1" max="20" value="1"></div>
+            <button id="preset-gen" class="primary-btn">生成预设</button>
+            <div class="field"><label>生成结果</label>
+            <textarea id="preset-result" class="result-text" rows="20"></textarea></div>
+            <div class="button-group"><button id="preset-copy" class="copy-btn">复制</button><button id="preset-clear">清空</button></div>`;
+}
+
+function refreshTemplateEditor() {
+    const container = document.getElementById('tab-template-edit');
+    if (container) {
+        container.innerHTML = renderTemplateEditor();
+        bindTemplateEditorEvents();
+    }
+}
+
+function renderTemplateEditor() {
+    let customPagesHtml = '';
+    for (const page of customPages) {
+        for (const submode of (page.submodes || [])) {
+            const templateValue = customTemplates[`custom_${page.name}_${submode.id}`] || '';
+            customPagesHtml += `
+                <div class="template-card">
+                    <h4>【自定义-${escapeHtml(page.name)}-${escapeHtml(submode.name)}】提示词</h4>
+                    <textarea id="edit-custom-${page.id}-${submode.id}" rows="8" style="width:100%; font-family: monospace; font-size: 12px;" placeholder="在这里填写提示词模板，可使用变量如 {input1} {count} {submode} 等">${escapeHtml(templateValue)}</textarea>
+                    <button id="save-custom-${page.id}-${submode.id}" class="save-tpl-btn">保存提示词</button>
+                </div>
+            `;
+        }
+    }
+    
+    return `
+        <div class="template-editor-grid">
+            <div class="grid-col">
+                <div class="template-card"><h4>角色卡模板</h4><textarea id="edit-char-template" rows="12" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(customTemplates.character)}</textarea><button id="save-char-template" class="save-tpl-btn">保存角色卡模板</button></div>
+                <div class="template-card"><h4>关系描述模板</h4><textarea id="edit-relation-template" rows="8" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(customTemplates.relationship)}</textarea><button id="save-relation-template" class="save-tpl-btn">保存关系描述模板</button></div>
+                <div class="template-card"><h4>魔法衣橱模板</h4><textarea id="edit-wardrobe-template" rows="8" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(customTemplates.wardrobe)}</textarea><button id="save-wardrobe-template" class="save-tpl-btn">保存魔法衣橱模板</button></div>
+                <div class="template-card"><h4>世界书提示词</h4><textarea id="edit-worldbook-prompt" rows="4" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(customTemplates.worldbook)}</textarea><button id="save-worldbook-prompt" class="save-tpl-btn">保存世界书提示词</button></div>
+                <div class="template-card"><h4>身份词库</h4><textarea id="edit-identity" rows="4" style="width:100%; font-family: monospace; font-size: 12px;" placeholder="每行一个身份">${escapeHtml(extraTemplates.identity || '')}</textarea><button id="save-identity" class="save-tpl-btn">保存身份词库</button></div>
+                <div class="template-card"><h4>关系词库</h4><textarea id="edit-relation" rows="4" style="width:100%; font-family: monospace; font-size: 12px;" placeholder="每行一个关系">${escapeHtml(extraTemplates.relation || '')}</textarea><button id="save-relation" class="save-tpl-btn">保存关系词库</button></div>
+                <div class="template-card"><h4>小说生成器提示词</h4><textarea id="edit-novel-system" rows="12" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(novelTemplates.systemPrompt)}</textarea><button id="save-novel-system" class="save-tpl-btn">保存小说提示词</button></div>
+                <div class="template-card"><h4>小剧场生成器提示词</h4><textarea id="edit-theater-system" rows="6" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(theaterTemplates.systemPrompt)}</textarea><button id="save-theater-system" class="save-tpl-btn">保存小剧场提示词</button></div>
+                <div class="template-card"><h4>心理分析提示词</h4><textarea id="edit-psychology-analysis" rows="20" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(psychologyTemplates.analysisPrompt)}</textarea><button id="save-psychology-analysis" class="save-tpl-btn">保存心理分析提示词</button></div>
+                <div class="template-card"><h4>文风生成提示词</h4><textarea id="edit-stylegen-system" rows="20" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(styleGenTemplates.systemPrompt)}</textarea><button id="save-stylegen-system" class="save-tpl-btn">保存文风生成提示词</button></div>
+                <div class="template-card"><h4>预设生成提示词</h4><textarea id="edit-presetgen-system" rows="12" style="width:100%; font-family: monospace; font-size: 12px;">${escapeHtml(presetGenTemplates.systemPrompt)}</textarea><button id="save-presetgen-system" class="save-tpl-btn">保存预设生成提示词</button></div>
+                <div class="template-card"><h4>QQ服装-自由描述模板</h4><textarea id="edit-qq-freeform" rows="6" style="width:100%; font-family: monospace; font-size: 12px;" placeholder="在这里填写自由描述模板，留空则AI自由发挥">${escapeHtml(qqClothingTemplates.freeform)}</textarea><button id="save-qq-freeform" class="save-tpl-btn">保存自由描述模板</button></div>
+                ${customPagesHtml}
+            </div>
+            <div class="grid-col">
+                <div class="template-card"><h4>世界书扩展模板</h4>${Object.entries(DEFAULT_WORLD_EXTEND_TEMPLATES).map(([key, template]) => `<div style="margin-bottom:12px;"><label><strong>${typeNames[key] || key}</strong></label><textarea id="edit-extend-${key}" rows="4" style="width:100%; font-family: monospace; font-size:12px;">${escapeHtml(customTemplates.worldExtend[key] || template)}</textarea></div>`).join('')}<button id="save-extend-templates" class="save-tpl-btn">保存所有扩展模板</button></div>
+                <div class="template-card"><h4>场景词库</h4><textarea id="edit-scene" rows="4" style="width:100%; font-family: monospace; font-size:12px;" placeholder="每行一个场景">${escapeHtml(extraTemplates.scene || '')}</textarea><button id="save-scene" class="save-tpl-btn">保存场景词库</button></div>
+                <div class="template-card"><h4>空间环境玩法</h4><textarea id="edit-space" rows="4" style="width:100%; font-family: monospace; font-size:12px;" placeholder="每行一个玩法">${escapeHtml(extraTemplates.gameplay_space || '')}</textarea><button id="save-space" class="save-tpl-btn">保存空间环境玩法</button></div>
+                <div class="template-card"><h4>权力动态玩法</h4><textarea id="edit-power" rows="4" style="width:100%; font-family: monospace; font-size:12px;" placeholder="每行一个玩法">${escapeHtml(extraTemplates.gameplay_power || '')}</textarea><button id="save-power" class="save-tpl-btn">保存权力动态玩法</button></div>
+                <div class="template-card"><h4>心理情境玩法</h4><textarea id="edit-psychological" rows="4" style="width:100%; font-family: monospace; font-size:12px;" placeholder="每行一个玩法">${escapeHtml(extraTemplates.gameplay_psychological || '')}</textarea><button id="save-psychological" class="save-tpl-btn">保存心理情境玩法</button></div>
+                <div class="template-card"><h4>剧情玩法</h4><textarea id="edit-plot" rows="4" style="width:100%; font-family: monospace; font-size:12px;" placeholder="每行一个玩法">${escapeHtml(extraTemplates.gameplay_plot || '')}</textarea><button id="save-plot" class="save-tpl-btn">保存剧情玩法</button></div>
+                <div class="template-card"><h4>小说续写提示词</h4><textarea id="edit-novel-continue" rows="12" style="width:100%; font-family: monospace; font-size:12px;">${escapeHtml(novelTemplates.continuePrompt)}</textarea><button id="save-novel-continue" class="save-tpl-btn">保存续写提示词</button></div>
+                <div class="template-card"><h4>MBTI分析提示词</h4><textarea id="edit-mbti-prompt" rows="12" style="width:100%; font-family: monospace; font-size:12px;">${escapeHtml(psychologyTemplates.mbtiPrompt)}</textarea><button id="save-mbti-prompt" class="save-tpl-btn">保存MBTI分析提示词</button></div>
+            </div>
+        </div>
+        <div class="reset-container"><button id="reset-all-templates" class="reset-btn">重置所有模板为默认</button></div>
+    `;
+}
+
+const typeNames = { location: '地点', faction: '势力', event: '事件', culture: '文化', technology: '科技', character: '重要人物' };
+
+function bindTemplateEditorEvents() {
+    const saveChar = document.getElementById('save-char-template');
+    if (saveChar) saveChar.onclick = () => { const v = document.getElementById('edit-char-template')?.value; if (v !== undefined) { customTemplates.character = v; saveCustomTemplates(); if (typeof toastr !== 'undefined') toastr.success('角色卡模板已保存'); } };
+    
+    const saveRelation = document.getElementById('save-relation-template');
+    if (saveRelation) saveRelation.onclick = () => { const v = document.getElementById('edit-relation-template')?.value; if (v !== undefined) { customTemplates.relationship = v; saveCustomTemplates(); if (typeof toastr !== 'undefined') toastr.success('关系描述模板已保存'); } };
+    
+    const saveWardrobe = document.getElementById('save-wardrobe-template');
+    if (saveWardrobe) saveWardrobe.onclick = () => { const v = document.getElementById('edit-wardrobe-template')?.value; if (v !== undefined) { customTemplates.wardrobe = v; saveCustomTemplates(); if (typeof toastr !== 'undefined') toastr.success('魔法衣橱模板已保存'); } };
+    
+    const saveWorldbook = document.getElementById('save-worldbook-prompt');
+    if (saveWorldbook) saveWorldbook.onclick = () => { const v = document.getElementById('edit-worldbook-prompt')?.value; if (v !== undefined) { customTemplates.worldbook = v; saveCustomTemplates(); if (typeof toastr !== 'undefined') toastr.success('世界书提示词已保存'); } };
+    
+    const saveExtend = document.getElementById('save-extend-templates');
+    if (saveExtend) saveExtend.onclick = () => { for (const key of Object.keys(DEFAULT_WORLD_EXTEND_TEMPLATES)) { const el = document.getElementById(`edit-extend-${key}`); if (el) customTemplates.worldExtend[key] = el.value; } saveCustomTemplates(); if (typeof toastr !== 'undefined') toastr.success('扩展模板已保存'); };
+    
+    const saveIdentity = document.getElementById('save-identity');
+    if (saveIdentity) saveIdentity.onclick = () => { extraTemplates.identity = document.getElementById('edit-identity')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('身份词库已保存'); };
+    
+    const saveRelationExtra = document.getElementById('save-relation');
+    if (saveRelationExtra) saveRelationExtra.onclick = () => { extraTemplates.relation = document.getElementById('edit-relation')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('关系词库已保存'); };
+    
+    const saveScene = document.getElementById('save-scene');
+    if (saveScene) saveScene.onclick = () => { extraTemplates.scene = document.getElementById('edit-scene')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('场景词库已保存'); };
+    
+    const saveSpace = document.getElementById('save-space');
+    if (saveSpace) saveSpace.onclick = () => { extraTemplates.gameplay_space = document.getElementById('edit-space')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('空间环境玩法已保存'); };
+    
+    const savePower = document.getElementById('save-power');
+    if (savePower) savePower.onclick = () => { extraTemplates.gameplay_power = document.getElementById('edit-power')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('权力动态玩法已保存'); };
+    
+    const savePsychological = document.getElementById('save-psychological');
+    if (savePsychological) savePsychological.onclick = () => { extraTemplates.gameplay_psychological = document.getElementById('edit-psychological')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('心理情境玩法已保存'); };
+    
+    const savePlot = document.getElementById('save-plot');
+    if (savePlot) savePlot.onclick = () => { extraTemplates.gameplay_plot = document.getElementById('edit-plot')?.value || ''; saveExtraTemplates(); if (typeof toastr !== 'undefined') toastr.success('剧情玩法已保存'); };
+    
+    const saveNovelSystem = document.getElementById('save-novel-system');
+    if (saveNovelSystem) saveNovelSystem.onclick = () => { novelTemplates.systemPrompt = document.getElementById('edit-novel-system')?.value || ''; saveNovelTemplates(); if (typeof toastr !== 'undefined') toastr.success('小说提示词已保存'); };
+    
+    const saveNovelContinue = document.getElementById('save-novel-continue');
+    if (saveNovelContinue) saveNovelContinue.onclick = () => { novelTemplates.continuePrompt = document.getElementById('edit-novel-continue')?.value || ''; saveNovelTemplates(); if (typeof toastr !== 'undefined') toastr.success('续写提示词已保存'); };
+    
+    const saveTheaterSystem = document.getElementById('save-theater-system');
+    if (saveTheaterSystem) saveTheaterSystem.onclick = () => { theaterTemplates.systemPrompt = document.getElementById('edit-theater-system')?.value || ''; saveTheaterTemplates(); if (typeof toastr !== 'undefined') toastr.success('小剧场提示词已保存'); };
+    
+    const savePsychologyAnalysis = document.getElementById('save-psychology-analysis');
+    if (savePsychologyAnalysis) savePsychologyAnalysis.onclick = () => { psychologyTemplates.analysisPrompt = document.getElementById('edit-psychology-analysis')?.value || ''; savePsychologyTemplates(); if (typeof toastr !== 'undefined') toastr.success('心理分析提示词已保存'); };
+    
+    const saveMbtiPrompt = document.getElementById('save-mbti-prompt');
+    if (saveMbtiPrompt) saveMbtiPrompt.onclick = () => { psychologyTemplates.mbtiPrompt = document.getElementById('edit-mbti-prompt')?.value || ''; savePsychologyTemplates(); if (typeof toastr !== 'undefined') toastr.success('MBTI分析提示词已保存'); };
+    
+    const saveStyleGenSystem = document.getElementById('save-stylegen-system');
+    if (saveStyleGenSystem) saveStyleGenSystem.onclick = () => { styleGenTemplates.systemPrompt = document.getElementById('edit-stylegen-system')?.value || ''; saveStyleGenTemplates(); if (typeof toastr !== 'undefined') toastr.success('文风生成提示词已保存'); };
+    
+    const savePresetGenSystem = document.getElementById('save-presetgen-system');
+    if (savePresetGenSystem) savePresetGenSystem.onclick = () => { presetGenTemplates.systemPrompt = document.getElementById('edit-presetgen-system')?.value || ''; savePresetGenTemplates(); if (typeof toastr !== 'undefined') toastr.success('预设生成提示词已保存'); };
+    
+    const saveQQFreeform = document.getElementById('save-qq-freeform');
+    if (saveQQFreeform) saveQQFreeform.onclick = () => { qqClothingTemplates.freeform = document.getElementById('edit-qq-freeform')?.value || ''; saveQQClothingTemplates(); if (typeof toastr !== 'undefined') toastr.success('QQ服装自由描述模板已保存'); };
+    
+    for (const page of customPages) {
+        for (const submode of (page.submodes || [])) {
+            const saveBtn = document.getElementById(`save-custom-${page.id}-${submode.id}`);
+            if (saveBtn) saveBtn.onclick = () => { const v = document.getElementById(`edit-custom-${page.id}-${submode.id}`)?.value; if (v !== undefined) { saveCustomPageTemplate(page.name, submode.id, v); if (typeof toastr !== 'undefined') toastr.success(`已保存`); } };
+        }
+    }
+    
+    const resetBtn = document.getElementById('reset-all-templates');
+    if (resetBtn) resetBtn.onclick = () => { if (confirm('重置所有模板为默认值？')) { location.reload(); } };
+}
+
+function createPanel() {
+if (document.getElementById(PANEL_ID)) return;
+
+const panel = document.createElement('div');
+panel.id = PANEL_ID;
+panel.className = 'ai-panel light-mode';
+panel.style.position = 'fixed';
+panel.style.left = `${config.panelLeft}px`;
+panel.style.top = `${config.panelTop}px`;
+panel.style.width = `${config.panelWidth}px`;
+panel.style.height = `${config.panelHeight}px`;
+panel.style.zIndex = '100000';
+panel.style.display = 'flex';
+panel.style.flexDirection = 'column';
+panel.style.overflow = 'hidden';
+panel.style.borderRadius = '12px';
+
+panel.innerHTML = `
+<div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; flex-shrink: 0;">
+<span>AI 人设生成器</span>
+<div class="header-actions" style="display: flex; align-items: center; gap: 8px;">
+<button id="size-minus-btn" class="size-control-btn">−</button>
+<button id="size-plus-btn" class="size-control-btn">+</button>
+<button id="reset-position-btn" class="size-control-btn">↺</button>
+<button id="quick-theme-btn" class="quick-theme-btn">🌓</button>
+<span class="panel-close" style="cursor: pointer;">✕</span>
+</div>
+</div>
+<div class="tab-bar" style="display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 12px 0 12px; flex-shrink: 0;"></div>
+<div class="tab-contents" style="flex: 1; overflow-y: auto;"></div>
+`;
+
+document.body.appendChild(panel);
+
+const tabContentsDiv = panel.querySelector('.tab-contents');
+
+const closeBtn = panel.querySelector('.panel-close');
+if (closeBtn) closeBtn.onclick = () => { panel.style.display = 'none'; };
+
+const sizeMinus = document.getElementById('size-minus-btn');
+const sizePlus = document.getElementById('size-plus-btn');
+const resetPos = document.getElementById('reset-position-btn');
+
+if (sizeMinus) {
+sizeMinus.onclick = () => {
+let newWidth = config.panelWidth - 20;
+if (newWidth < 200) newWidth = 200;
+config.panelWidth = newWidth;
+saveConfig();
+panel.style.width = `${newWidth}px`;
+const ws = document.getElementById('width-slider');
+if (ws) ws.value = newWidth;
+const widthVal = document.getElementById('width-val');
+if (widthVal) widthVal.textContent = newWidth;
+};
+}
+
+if (sizePlus) {
+sizePlus.onclick = () => {
+let newWidth = config.panelWidth + 20;
+const maxWidth = window.innerWidth - 20;
+if (newWidth > maxWidth) newWidth = maxWidth;
+config.panelWidth = newWidth;
+saveConfig();
+panel.style.width = `${newWidth}px`;
+const ws = document.getElementById('width-slider');
+if (ws) ws.value = newWidth;
+const widthVal = document.getElementById('width-val');
+if (widthVal) widthVal.textContent = newWidth;
+};
+}
+
+if (resetPos) {
+resetPos.onclick = () => {
+const newLeft = window.innerWidth - config.panelWidth - 20;
+const newTop = 20;
+config.panelLeft = newLeft;
+config.panelTop = newTop;
+saveConfig();
+panel.style.left = `${newLeft}px`;
+panel.style.top = `${newTop}px`;
+const ls = document.getElementById('left-slider');
+if (ls) { ls.value = newLeft; document.getElementById('left-val').textContent = newLeft; }
+const ts = document.getElementById('top-slider');
+if (ts) { ts.value = newTop; document.getElementById('top-val').textContent = newTop; }
+};
+}
+
+rebuildTabsAndContents();
+
+setTimeout(() => {
+refreshHistoryList();
+refreshTemplateList();
+refreshRelationList();
+applyTheme();
+refreshCustomPagesUI();
+loadExtraTemplates();
+loadNovelTemplates();
+loadTheaterTemplates();
+loadPsychologyTemplates();
+loadStyleGenTemplates();
+loadPresetGenTemplates();
+loadQQClothingTemplates();
+loadCurrentNovel();
+}, 100);
+}
+
+function addMenuItem() {
+const check = setInterval(() => {
+const menu = document.querySelector('#options .options-content');
+if (menu) {
+clearInterval(check);
+if (document.querySelector('.ai-menu-item')) return;
+const item = document.createElement('div');
+item.className = 'ai-menu-item';
+item.innerHTML = '👾 AI人设生成器';
+item.style.display = 'flex';
+item.style.alignItems = 'center';
+item.style.gap = '8px';
+item.style.padding = '8px 12px';
+item.style.cursor = 'pointer';
+item.style.borderRadius = '6px';
+item.onclick = () => {
+const panel = document.getElementById(PANEL_ID);
+if (panel) panel.style.display = 'flex';
+};
+menu.appendChild(item);
+}
+}, 500);
+}
+
+const style = document.createElement('style');
+style.textContent = `
+.ai-panel { position: fixed; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); z-index: 100000; display: none; flex-direction: column; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.tab-bar { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 12px 0 12px; border-bottom: 1px solid; flex-shrink: 0; }
+.tab-btn { padding: 6px 12px; background: none; border: none; cursor: pointer; font-size: 12px; border-radius: 8px 8px 0 0; position: relative; }
+.tab-btn.active { font-weight: 500; border: 1px solid; border-bottom-color: transparent; margin-bottom: -1px; }
+.tab-content { padding: 16px; overflow-y: auto; display: none; height: 100%; box-sizing: border-box; }
+.tab-content.active { display: block; }
+.field { margin-bottom: 14px; }
+.field label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500; }
+.field input, .field textarea, .field select { width: 100%; padding: 8px 10px; border: 1px solid; border-radius: 8px; font-size: 13px; box-sizing: border-box; background: transparent; }
+.field textarea { resize: vertical; font-family: monospace; }
+.result-text { font-family: monospace; font-size: 12px; line-height: 1.5; padding: 10px; border-radius: 8px; border: 1px solid; }
+button { padding: 6px 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+button:hover { filter: brightness(0.95); }
+.primary-btn { width: 100%; margin-bottom: 14px; color: white; }
+.button-group { display: flex; gap: 8px; margin: 10px 0; }
+.flex-row { display: flex; gap: 8px; }
+.flex-row input { flex: 1; }
+.extend-checkboxes { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.extend-checkboxes label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 13px; padding: 4px 12px; border-radius: 20px; border: 1px solid; }
+.list-container { max-height: 150px; overflow-y: auto; border: 1px solid; border-radius: 8px; margin-bottom: 10px; }
+.char-item, .history-item, .template-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid; cursor: pointer; }
+.char-item:hover, .history-item:hover { background: rgba(128,128,128,0.1); }
+.history-type { font-weight: 500; font-size: 12px; }
+.history-time { font-size: 10px; opacity: 0.6; }
+.history-preview { font-size: 11px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+.template-actions { display: flex; gap: 8px; }
+.empty-state { text-align: center; padding: 20px; opacity: 0.6; font-size: 13px; }
+.template-editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-col { display: flex; flex-direction: column; gap: 16px; }
+.template-card { border: 1px solid; border-radius: 8px; padding: 12px; }
+.template-card h4 { margin: 0 0 10px 0; font-size: 14px; font-weight: 600; }
+.save-tpl-btn { margin-top: 8px; width: 100%; }
+.reset-container { margin-top: 20px; text-align: center; }
+.reset-btn { background: #d32f2f; color: white; padding: 8px 20px; }
+.novel-title-display { padding: 8px 10px; border-radius: 8px; font-size: 16px; font-weight: bold; background: rgba(128,128,128,0.1); }
+.novel-chapters { max-height: 500px; overflow-y: auto; }
+.chapter-card { border: 1px solid; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+.chapter-title { padding: 10px 12px; font-weight: bold; border-bottom: 1px solid; background: rgba(128,128,128,0.05); }
+.chapter-content-textarea { width: 100%; padding: 12px; font-family: monospace; font-size: 12px; line-height: 1.5; border: none; resize: vertical; background: transparent; min-height: 150px; }
+.custom-page-editor { display: flex; flex-direction: column; gap: 20px; }
+.custom-page-form { border: 1px solid; border-radius: 8px; padding: 16px; }
+.custom-page-list { border: 1px solid; border-radius: 8px; padding: 16px; }
+.custom-page-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid; }
+.custom-page-item:hover { background: rgba(128,128,128,0.05); }
+.custom-page-name { font-weight: 500; }
+.custom-page-status { font-size: 11px; padding: 2px 6px; border-radius: 10px; margin-left: 8px; }
+.custom-page-status.enabled { background: #4caf50; color: white; }
+.custom-page-status.disabled { background: #999; color: white; }
+.custom-page-actions button { margin-left: 8px; padding: 4px 8px; font-size: 12px; }
+.custom-submode-row, .custom-input-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+.custom-submode-row input, .custom-input-row input, .custom-input-row select { padding: 4px 8px; border-radius: 4px; border: 1px solid; background: transparent; }
+.remove-submode-row, .remove-input-row { background: #d32f2f; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.custom-page-content { padding: 0; }
+.delete-page-container { margin-top: 16px; padding: 12px; border-top: 1px solid; text-align: center; }
+.delete-page-btn { background: #d32f2f; color: white; padding: 6px 16px; border: none; border-radius: 8px; cursor: pointer; }
+.builtin-delete-container { margin-top: 16px; padding: 12px; border-top: 1px solid; text-align: center; }
+.theme-hr { margin: 20px 0; border-color: var(--SmartThemeBorderColor, #444); }
+`;
+document.head.appendChild(style);
+
+addMenuItem();
+createPanel();
+}
+})();
